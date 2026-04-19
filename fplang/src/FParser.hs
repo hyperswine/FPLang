@@ -121,7 +121,20 @@ parsePattern =
 -- ─────────────────────────────────────────────────────────────────────────────
 
 parseExpr :: Parser Expr
-parseExpr = choice [parseLet, try parseIsoDecl, parseIf, parseLam, parseSend, parseReceive, parseMatch, parseSpawn, parseAtom]
+parseExpr = choice [parseLet, try parseIsoDecl, parseIf, parseLam, parseSend, parseReceive, parseMatch, parseSpawn, parsePipe]
+
+-- a |> f        desugars to  f(a)
+-- a |> f(x)     desugars to  (f(x))(a)   — relies on f being curried/returning a partial fn
+-- Left-associative so  a |> f |> g  ≡  g(f(a))
+parsePipe :: Parser Expr
+parsePipe = do
+  base <- parseAtom
+  steps <- many . try $ do
+    sc
+    void (string "|>")
+    scn
+    parseAtom
+  return $ foldl (\acc f -> App f [acc]) base steps
 
 -- let x = rhs              open — body filled in by chainLets
 -- let x = rhs in body      closed

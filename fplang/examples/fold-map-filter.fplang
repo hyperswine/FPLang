@@ -1,4 +1,5 @@
 -- Recursion schemes: map, foldr, and filter for singly-linked cons-lists.
+-- Constructors require Tag
 
 let showIntList = fix(fn(self) => fn(xs) =>
   match(xs) {

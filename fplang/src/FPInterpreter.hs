@@ -606,6 +606,17 @@ primEnv = Map.fromList
   , ("fclose",     VPrim "fclose"     primFClose)
   , ("fseek",      VPrim "fseek"      primFSeek)
   , ("toJson",     VPrim "toJson"     primToJson)
+  , ("fromJson",   VPrim "fromJson"   primFromJson)
+  -- Iso-aware recursion schemes.  Each is curried: map(f) returns a partial fn
+  -- that, when called with a collection xs, unwraps xs through its iso to
+  -- ConsList (if one is registered), processes the cons-list, then rewraps.
+  , ("map",        VPrim "map"        primIsoMap)
+  , ("filter",     VPrim "filter"     primIsoFilter)
+  , ("foldr",      VPrim "foldr"      primIsoFoldr)
+  -- Convenience file I/O: read(path) and write(path) wrap the fopen/fread/fwrite/fclose
+  -- dance so they compose cleanly with |>.
+  , ("read",       VPrim "read"       primFileRead)
+  , ("write",      VPrim "write"      primFileWrite)
   , ("true",       VBool True)
   , ("false",      VBool False)
   , ("unit",       VUnit)
@@ -888,6 +899,183 @@ escapeJsonStr = concatMap esc
 primToJson :: [Value] -> ActorM Value
 primToJson [v] = return (VStr (valueToJson v))
 primToJson _   = actorFail "toJson: expected exactly one argument"
+
+-- =============================================================================
+-- ISO-AWARE RECURSION SCHEMES
+-- map, filter, and foldr automatically check whether their collection argument
+-- has an isomorphism registered to "ConsList".  If so they transparently
+-- unwrap through fwd, process the Cons/Nil chain, then rewrap through bkwd.
+-- All three are curried: map(f) returns a partial VPrim so they compose with |>.
+-- =============================================================================
+
+-- | Given a value, attempt to coerce it to a Cons/Nil chain via a registered
+--   iso to "ConsList".  Returns (inner cons-list, rewrap function).
+--   The rewrap function applies bkwd to restore the original brand; if no iso
+--   exists (or the value is already raw Cons/Nil) it is the identity.
+isoUnwrap :: Value -> ActorM (Value, Value -> ActorM Value)
+isoUnwrap v = case v of
+  VTagged t _ -> ActorM $ \st -> do
+    mIso <- isoLookup (actorIsoMap st) t "ConsList"
+    case mIso of
+      Nothing          -> return (v, return)
+      Just (fwd, bkwd) -> do
+        inner <- runActorM (applyFn fwd [v]) st
+        return (inner, \r -> applyFn bkwd [r])
+  VList vs -> do
+    let cons = foldr (\x acc -> VTagged "Cons" [x, acc]) (VTagged "Nil" []) vs
+    return (cons, return)
+  _ -> return (v, return)
+
+-- | Internal map over a raw Cons/Nil chain.
+mapCons :: Value -> Value -> ActorM Value
+mapCons _ (VTagged "Nil" _)       = return (VTagged "Nil" [])
+mapCons f (VTagged "Cons" [h, t]) = do
+  h' <- applyFn f [h]
+  t' <- mapCons f t
+  return (VTagged "Cons" [h', t'])
+mapCons _ v = actorFail $ "map: expected Cons/Nil chain, got: " ++ show v
+
+-- | Internal filter over a raw Cons/Nil chain.
+filterCons :: Value -> Value -> ActorM Value
+filterCons _ (VTagged "Nil" _)       = return (VTagged "Nil" [])
+filterCons p (VTagged "Cons" [h, t]) = do
+  keep <- applyFn p [h]
+  t'   <- filterCons p t
+  return $ case keep of
+    VBool True -> VTagged "Cons" [h, t']
+    _          -> t'
+filterCons _ v = actorFail $ "filter: expected Cons/Nil chain, got: " ++ show v
+
+-- | Internal right fold over a raw Cons/Nil chain.
+foldrCons :: Value -> Value -> Value -> ActorM Value
+foldrCons _ z (VTagged "Nil" _)       = return z
+foldrCons f z (VTagged "Cons" [h, t]) = do
+  rest <- foldrCons f z t
+  applyFn f [h, rest]
+foldrCons _ _ v = actorFail $ "foldr: expected Cons/Nil chain, got: " ++ show v
+
+primIsoMap :: [Value] -> ActorM Value
+primIsoMap [f]     = return $ VPrim "map-partial" $ \args -> primIsoMap (f : args)
+primIsoMap [f, xs] = do
+  (inner, rewrap) <- isoUnwrap xs
+  result          <- mapCons f inner
+  rewrap result
+primIsoMap _ = actorFail "map: expected 1 or 2 arguments"
+
+primIsoFilter :: [Value] -> ActorM Value
+primIsoFilter [p]     = return $ VPrim "filter-partial" $ \args -> primIsoFilter (p : args)
+primIsoFilter [p, xs] = do
+  (inner, rewrap) <- isoUnwrap xs
+  result          <- filterCons p inner
+  rewrap result
+primIsoFilter _ = actorFail "filter: expected 1 or 2 arguments"
+
+primIsoFoldr :: [Value] -> ActorM Value
+primIsoFoldr [f]        = return $ VPrim "foldr-p1" $ \args -> primIsoFoldr (f : args)
+primIsoFoldr [f, z]     = return $ VPrim "foldr-p2" $ \args -> primIsoFoldr (f : z : args)
+primIsoFoldr [f, z, xs] = do
+  (inner, _) <- isoUnwrap xs   -- fold collapses to z's type; no rewrap needed
+  foldrCons f z inner
+primIsoFoldr _ = actorFail "foldr: expected 2 or 3 arguments"
+
+-- =============================================================================
+-- CONVENIENCE FILE I/O
+-- read(path)   opens the file, reads it, closes it, and returns the value.
+-- write(path)  is curried: write(path) returns a fn(v) that serialises v to
+--              JSON and writes it.  This lets pipelines work:
+--   read("/files/db.json") |> fromJson |> map(f) |> write("/files/db.json")
+-- =============================================================================
+
+primFileRead :: [Value] -> ActorM Value
+primFileRead [VStr path] = do
+  fd  <- primFOpen [VStr path]
+  val <- primFRead [fd]
+  _   <- primFClose [fd]
+  return val
+primFileRead _ = actorFail "read: expected a string path"
+
+primFileWrite :: [Value] -> ActorM Value
+primFileWrite [VStr path] =
+  return $ VPrim "write-partial" $ \args -> primFileWrite (VStr path : args)
+primFileWrite [VStr path, v] = do
+  fd <- primFOpen [VStr path]
+  _  <- primFWrite [fd, v]
+  _  <- primFClose [fd]
+  return VUnit
+primFileWrite _ = actorFail "write: expected a string path and a value"
+
+-- =============================================================================
+-- JSON DESERIALISER  (fromJson)
+-- Parses the JSON produced by valueToJson back into a Value.
+-- {"_tag":"X","_fields":[...]}  →  VTagged X [...]
+-- [...]                         →  VList  [...]
+-- Numbers, strings, booleans, null handled as expected.
+-- =============================================================================
+
+fromJsonStr :: String -> Either String Value
+fromJsonStr input =
+  case jVal (dropSp input) of
+    Just (v, rest) | all (`elem` (" \t\n\r" :: String)) rest -> Right v
+    Just (_, rest) -> Left $ "fromJson: trailing input: " ++ take 40 rest
+    Nothing        -> Left $ "fromJson: cannot parse: "  ++ take 40 input
+  where
+    dropSp = dropWhile (`elem` (" \t\n\r" :: String))
+
+    jVal s = case dropSp s of
+      'n':'u':'l':'l':r     -> Just (VUnit,        r)
+      't':'r':'u':'e':r     -> Just (VBool True,   r)
+      'f':'a':'l':'s':'e':r -> Just (VBool False,  r)
+      '"':r                 -> jStr r []
+      '[':r                 -> jArr (dropSp r)
+      '{':r                 -> jObj (dropSp r)
+      r                     -> jNum r
+
+    jStr []         _   = Nothing
+    jStr ('"':r)    acc = Just (VStr (reverse acc), r)
+    jStr ('\\':c:r) acc = jStr r (unesc c : acc)
+    jStr (c:r)      acc = jStr r (c : acc)
+    unesc '"'  = '"' ; unesc '\\' = '\\' ; unesc 'n' = '\n'
+    unesc 'r'  = '\r'; unesc 't'  = '\t' ; unesc c   = c
+
+    jNum s =
+      let (neg, s') = case s of { '-':r -> (True, r); _ -> (False, s) }
+          (digits, rest) = span (\c -> c >= '0' && c <= '9') s'
+      in if null digits then Nothing
+         else Just (VInt (if neg then negate (read digits) else read digits), rest)
+
+    jArr (']':r) = Just (VList [], r)
+    jArr s       = do
+      (vs, r) <- jCommaSep jVal s
+      case dropSp r of
+        ']':rest -> Just (VList vs, rest)
+        _        -> Nothing
+
+    jObj s = do
+      (kvs, r) <- jCommaSep jKV s
+      case dropSp r of
+        '}':rest -> do
+          tag <- lookup "_tag"    kvs >>= (\case VStr t -> Just t;  _ -> Nothing)
+          fls <- lookup "_fields" kvs >>= (\case VList f -> Just f; _ -> Nothing)
+          Just (VTagged tag fls, rest)
+        _ -> Nothing
+
+    jKV s = do
+      (VStr k, r1) <- case dropSp s of { '"':r -> jStr r []; _ -> Nothing }
+      case dropSp r1 of
+        ':':r2 -> do { (v, r3) <- jVal (dropSp r2); Just ((k, v), r3) }
+        _      -> Nothing
+
+    jCommaSep p s = do
+      (x, r1) <- p (dropSp s)
+      case dropSp r1 of
+        ',':r2 -> do { (xs, r3) <- jCommaSep p (dropSp r2); Just (x:xs, r3) }
+        _      -> Just ([x], r1)
+
+primFromJson :: [Value] -> ActorM Value
+primFromJson [VStr s] = case fromJsonStr s of
+  Right v  -> return v
+  Left err -> actorFail err
+primFromJson _ = actorFail "fromJson: expected a JSON string"
 
 -- =============================================================================
 -- EXAMPLES  (inline test programs; main entry point is in Main.hs)
