@@ -4,17 +4,28 @@
   "description": "Language support for FPLang — syntax highlighting, semantic tokens, and LSP features",
   "version": "0.1.0",
   "publisher": "fplang",
-  "engines": { "vscode": "^1.82.0" },
-  "categories": ["Programming Languages"],
-  "activationEvents": [],
-  "repository": {"url": "github"},
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": ["onLanguage:fplang"],
+  "repository": {
+    "url": "github"
+  },
   "main": "./out/extension.js",
   "contributes": {
     "languages": [
       {
         "id": "fplang",
-        "aliases": ["FPLang", "fplang"],
-        "extensions": [".fplang"],
+        "aliases": [
+          "FPLang",
+          "fplang"
+        ],
+        "extensions": [
+          ".fplang"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -26,24 +37,40 @@
       }
     ],
     "semanticTokenTypes": [
-      { "id": "letBinding",  "description": "Top-level let binding name" },
-      { "id": "constructor", "description": "Tagged constructor name" },
-      { "id": "builtinFn",   "description": "Built-in primitive function" }
+      {
+        "id": "letBinding",
+        "description": "Top-level let binding name"
+      },
+      {
+        "id": "constructor",
+        "description": "Tagged constructor name"
+      },
+      {
+        "id": "builtinFn",
+        "description": "Built-in primitive function"
+      }
     ],
     "semanticTokenScopes": [
       {
         "scopes": {
-          "letBinding":  ["variable.other.readwrite.fplang"],
-          "constructor": ["entity.name.type.fplang"],
-          "builtinFn":   ["support.function.fplang"]
+          "letBinding": [
+            "variable.other.readwrite.fplang"
+          ],
+          "constructor": [
+            "entity.name.type.fplang"
+          ],
+          "builtinFn": [
+            "support.function.fplang"
+          ]
         }
       }
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "node build.mjs",
+    "compile": "node build.mjs",
+    "watch": "node build.mjs && tsc -watch -p ./ --noEmit",
+    "typecheck": "tsc -p ./ --noEmit",
     "lint": "eslint src --ext ts"
   },
   "dependencies": {
@@ -54,6 +81,7 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.82.0",
+    "esbuild": "^0.28.0",
     "typescript": "^5.3.3"
   }
 }
