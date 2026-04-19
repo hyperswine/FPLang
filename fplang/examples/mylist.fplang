@@ -6,92 +6,72 @@
 --     by expanding it first (fwd), then reading the result, and
 --   • build RleLists efficiently from flat data (bkwd = compress).
 --
--- Both expand and compress are implemented as structural recursion
--- over Cons/Nil lists, using the send-to-self pattern-match trick.
+-- Both expand and compress are structural recursion over Cons/Nil lists.
 
 -- ── Cons-list primitives ─────────────────────────────────────────────────────
 
-let listFoldr = fix listFoldr(f, z, xs) => {
-  send "main" Tag Inspect(xs)
-  receive {
-    Inspect(Nil) => z
-    Inspect(Cons(h, t)) => f(h, listFoldr(f, z, t))
-  }
-}
+let listFoldr = fix(fn(self) => fn(f, z, xs) =>
+  match(xs) {
+    Nil => z
+  | Cons(h, t) => f(h, self(f, z, t))
+  })
 
-let append = fix append(xs, ys) => {
-  send "main" Tag Inspect(xs)
-  receive {
-    Inspect(Nil) => ys
-    Inspect(Cons(h, t)) => Tag Cons(h, append(t, ys))
-  }
-}
+let append = fix(fn(self) => fn(xs, ys) =>
+  match(xs) {
+    Nil => ys
+  | Cons(h, t) => Tag Cons(h, self(t, ys))
+  })
 
 -- replicate(n, v) = [v, v, ..., v]  (n times)
-let replicate = fix replicate(n, v) =>
+let replicate = fix(fn(self) => fn(n, v) =>
   if intEq(n, 0) then Tag Nil
-  else Tag Cons(v, replicate(intSub(n, 1), v))
+  else Tag Cons(v, self(intSub(n, 1), v)))
 
-let listSum  = fn(xs) => listFoldr(fn(h, acc) => intAdd(h, acc), 0, xs)
-let listLen  = fn(xs) => listFoldr(fn(h, acc) => intAdd(1, acc), 0, xs)
+let listSum = fn(xs) => listFoldr(fn(h, acc) => intAdd(h, acc), 0, xs)
+let listLen = fn(xs) => listFoldr(fn(h, acc) => intAdd(1, acc), 0, xs)
 
-let listShowInts = fix listShowInts(xs) => {
-  send "main" Tag Inspect(xs)
-  receive {
-    Inspect(Nil) => "Nil"
-    Inspect(Cons(h, t)) =>
-      strConcat(strConcat(intToStr(h), " : "), listShowInts(t))
-  }
-}
+let listShowInts = fix(fn(self) => fn(xs) =>
+  match(xs) {
+    Nil => "Nil"
+  | Cons(h, t) => strConcat(strConcat(intToStr(h), " : "), self(t))
+  })
 
 -- ── RLE expand: RleList -> FlatList ─────────────────────────────────────────
--- Each Tag Run(count, val) in the run list expands to `count` copies of `val`.
--- The outer envelope Inspect walks the run-list; the inner RunInspect
--- destructures each individual run.
+-- Each Tag Run(count, val) expands to `count` copies of `val`.
 
-let expand = fix expand(runs) => {
-  send "main" Tag Inspect(runs)
-  receive {
-    Inspect(Nil) => Tag Nil
-    Inspect(Cons(run, rest)) => {
-      send "main" Tag RunInspect(run)
-      receive {
-        RunInspect(Run(count, val)) =>
-          append(replicate(count, val), expand(rest))
+let expand = fix(fn(self) => fn(runs) =>
+  match(runs) {
+    Nil => Tag Nil
+  | Cons(run, rest) =>
+      match(run) {
+        Run(count, val) => append(replicate(count, val), self(rest))
       }
-    }
-  }
-}
+  })
 
 -- ── RLE compress: FlatList -> RleList ────────────────────────────────────────
 -- Accumulate a current (value, count) pair and flush it when the value
 -- changes or the list is exhausted.
 
-let compressAcc = fix compressAcc(xs, curVal, curCount) => {
-  send "main" Tag Inspect(xs)
-  receive {
-    Inspect(Nil) =>
-      Tag Cons(Tag Run(curCount, curVal), Tag Nil)
-    Inspect(Cons(h, t)) =>
+let compressAcc = fix(fn(self) => fn(xs, curVal, curCount) =>
+  match(xs) {
+    Nil => Tag Cons(Tag Run(curCount, curVal), Tag Nil)
+  | Cons(h, t) =>
       if intEq(h, curVal)
-      then compressAcc(t, curVal, intAdd(curCount, 1))
-      else Tag Cons(Tag Run(curCount, curVal), compressAcc(t, h, 1))
-  }
-}
+      then self(t, curVal, intAdd(curCount, 1))
+      else Tag Cons(Tag Run(curCount, curVal), self(t, h, 1))
+  })
 
-let compress = fn(xs) => {
-  send "main" Tag Inspect(xs)
-  receive {
-    Inspect(Nil) => Tag Nil
-    Inspect(Cons(h, t)) => compressAcc(t, h, 1)
+let compress = fn(xs) =>
+  match(xs) {
+    Nil => Tag Nil
+  | Cons(h, t) => compressAcc(t, h, 1)
   }
-}
 
 -- ── Register the isomorphism ─────────────────────────────────────────────────
 -- fwd  : RleList(runs) -> flat cons-list  (expand the inner run-list)
 -- bkwd : flat cons-list -> RleList(runs)  (compress and wrap)
 
-let rleUnwrap = fn(r) => tagPayload(r)    -- RleList(runs) -> runs
+let rleUnwrap = fn(r) => tagPayload(r)
 let rleWrap   = fn(runs) => Tag RleList(runs)
 
 let rleFwd  = fn(r) => expand(rleUnwrap(r))
@@ -104,15 +84,14 @@ iso RleList FlatList rleFwd rleBkwd
 let showRun = fn(run) =>
   match(run) {
     Run(count, val) =>
-      strConcat(strConcat(strConcat("Run(", intToStr(count)), strConcat(",", intToStr(val))), ")")
+      strConcat(strConcat("Run(", intToStr(count)), strConcat(",", strConcat(intToStr(val), ")")))
   }
 
-let showRleList = fix showRleList(runs) =>
+let showRleList = fix(fn(self) => fn(runs) =>
   match(runs) {
     Nil => "Nil"
-  | Cons(run, t) =>
-      strConcat(strConcat(showRun(run), " : "), showRleList(t))
-  }
+  | Cons(run, t) => strConcat(strConcat(showRun(run), " : "), self(t))
+  })
 
 -- ── Lift flat-list operations to RleList via the iso ─────────────────────────
 
