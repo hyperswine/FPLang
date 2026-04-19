@@ -1,0 +1,48 @@
+name:                fplang
+version:             0.1.0.0
+github:              "hyperswine/fplang"
+license:             GPL-3
+author:              "Jasen Qin"
+maintainer:          "jasen.qin33@gmail.com"
+copyright:           "2025 Jasen Qin"
+
+extra-source-files:
+- README.md
+
+description: fplang — a functional programming language with a virtual file system
+
+dependencies:
+- base >= 4.7 && < 5
+- containers
+- mtl
+- text
+- megaparsec
+- parser-combinators
+- stm
+- process
+- filepath
+- directory
+- temporary
+- time
+
+ghc-options:
+- -Wall
+- -Wcompat
+- -Wincomplete-record-updates
+- -Wincomplete-uni-patterns
+- -Wredundant-constraints
+
+library:
+  source-dirs: src
+
+executables:
+  fplang:
+    main:             Main.hs
+    source-dirs:      app
+    ghc-options:
+    - -O2
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - fplang

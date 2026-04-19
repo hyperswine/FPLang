@@ -1,0 +1,18 @@
+/Users/jasenqin/.stack/programs/aarch64-osx/ghc-9.8.2/lib/ghc-9.8.2/lib/aarch64-osx-ghc-9.8.2/rts-1.0.2/include/ghcversion.h:
+  hash: c5092117b43444aa549ce09a514f36de03d946ec55bbd106d8611b49702ccbbe
+/Users/jasenqin/Documents/GitHub/FPLang/fplang/.stack-work/dist/aarch64-osx/ghc-9.8.2/build/autogen/Paths_fplang.hs:
+  hash: beba780bd932d94a630800e26ed1970492af2d2e2ad13073c38156ee2a7f73f7
+/Users/jasenqin/Documents/GitHub/FPLang/fplang/.stack-work/dist/aarch64-osx/ghc-9.8.2/build/autogen/cabal_macros.h:
+  hash: f321fc37e1121bfa1c7a43437967899e6d2b1d1709cfd161fe489f5066623e08
+/Users/jasenqin/Documents/GitHub/FPLang/fplang/fplang.cabal:
+  hash: e018c4fe31819a2683ea3de1a67fb3b87ee905580f1ad800f9fa22db062f00cf
+/Users/jasenqin/Documents/GitHub/FPLang/fplang/package.yaml:
+  hash: dfbf0cd083b0d7dbad72248a957fcd4c56c3566086c4f62a0849c0b0e3778e77
+/Users/jasenqin/Documents/GitHub/FPLang/fplang/src/FPDevices.hs:
+  hash: 4b871ce3e3fd4da6e249a300222f3d13e39004bf37c3c544778fb0182ffdfabd
+/Users/jasenqin/Documents/GitHub/FPLang/fplang/src/FPInterpreter.hs:
+  hash: a0ac171e526e296c94ca60415bff0078b8c413d1ead6dd29edbaa7432e8c82c2
+/Users/jasenqin/Documents/GitHub/FPLang/fplang/src/FPRunner.hs:
+  hash: 8db1ff8b9e91355d6e11e9f7926306adc0c76dd3aa37b276cd17326a3e23689f
+/Users/jasenqin/Documents/GitHub/FPLang/fplang/src/FParser.hs:
+  hash: 2ed0bfaec4037c562f4d0df2cad0082d92c016257cd34cfa32e0a2e7e9e71f88
