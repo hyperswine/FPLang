@@ -1,0 +1,67 @@
+-- test-iso-pipeline.fplang
+-- Tests iso-aware map / filter / foldr with a branded type, verifying:
+--   * map rewraps the result in the original brand
+--   * filter rewraps the result
+--   * foldr does NOT rewrap (result is the accumulator type)
+--   * chained map |> filter |> foldr over a branded type
+--   * two different branded types registered; operations pick the right iso
+--   * a value with NO iso falls through to plain Cons/Nil processing
+
+-- ── Brand A: EvenBag — a list of numbers we promise are even ─────────────────
+
+let bagUnwrap = fn(b) => tagPayload(b)
+let bagWrap   = fn(xs) => Tag EvenBag(xs)
+iso EvenBag ConsList bagUnwrap bagWrap
+
+-- ── Brand B: NameList — a list of strings ────────────────────────────────────
+
+let nlUnwrap = fn(nl) => tagPayload(nl)
+let nlWrap   = fn(xs) => Tag NameList(xs)
+iso NameList ConsList nlUnwrap nlWrap
+
+-- ── Build EvenBag ─────────────────────────────────────────────────────────────
+
+let e1 = Tag Cons(2, Tag Cons(4, Tag Cons(6, Tag Cons(8, Tag Cons(10, Tag Nil)))))
+let bag = bagWrap(e1)
+
+-- map over EvenBag: double every element; result should still be EvenBag
+let doubled = map(fn(x) => intMul(x, 2), bag)
+let doubledType = type(doubled)
+println(strConcat("map result type = ", showVal(doubledType)))
+
+-- sum via foldr (no rewrap expected; accumulator is VInt)
+let bagSum = fn(b) => foldr(fn(h, acc) => intAdd(h, acc), 0, b)
+println(strConcat("sum of doubled   = ", intToStr(bagSum(doubled))))
+
+-- filter: keep only those divisible by 4
+let keep4 = filter(fn(x) => intEq(intMod(x, 4), 0), doubled)
+let keep4Type = type(keep4)
+println(strConcat("filter result type = ", showVal(keep4Type)))
+println(strConcat("sum after filter   = ", intToStr(bagSum(keep4))))
+
+-- chained pipe: bag |> map(double) |> filter(>8) |> sum
+let gt8 = fn(x) => intGt(x, 8)
+let chainSum = bag |> map(fn(x) => intMul(x, 2)) |> filter(gt8) |> bagSum
+println(strConcat("chain sum (>8)     = ", intToStr(chainSum)))
+
+-- ── NameList operations ───────────────────────────────────────────────────────
+
+let n1 = Tag Cons("alice", Tag Cons("bob", Tag Cons("carol", Tag Nil)))
+let names = nlWrap(n1)
+
+-- map: uppercase first char (fake: just prepend "!")
+let bangify = fn(s) => strConcat("!", s)
+let banged = map(bangify, names)
+let bangedType = type(banged)
+println(strConcat("NameList map type = ", showVal(bangedType)))
+
+-- count via foldr
+let count = foldr(fn(h, acc) => intAdd(1, acc), 0, banged)
+println(strConcat("NameList count    = ", intToStr(count)))
+
+-- ── Plain Cons/Nil (no iso) falls through correctly ──────────────────────────
+
+let plain = Tag Cons(1, Tag Cons(2, Tag Cons(3, Tag Nil)))
+let plainDoubled = map(fn(x) => intMul(x, 2), plain)
+let plainSum = foldr(fn(h, acc) => intAdd(h, acc), 0, plainDoubled)
+println(strConcat("plain cons sum    = ", intToStr(plainSum)))

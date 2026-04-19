@@ -1,0 +1,103 @@
+-- test-deep-match.fplang
+-- Exercises complex and nested pattern matching:
+--   * match inside match (3 levels deep via binary tree depth)
+--   * match whose scrutinee is itself a match result
+--   * match inside a lambda passed to map/filter
+--   * variable shadowing across nested match branches
+--   * match on a list-of-tagged-values with two accumulators
+--   * wildcard in a nested position
+--   * match expression as a direct function argument
+
+-- ── 3-level nested match: binary tree depth ───────────────────────────────────
+-- Multi-statement branch wrapped in { } so let bindings chain.
+let depth = fix(fn(self) =>
+  fn(t) => match(t) {
+    Leaf(n) => 0
+  | Node(l, r) => {
+      let ld = self(l)
+      let rd = self(r)
+      intAdd(1, if intGt(ld, rd) then ld else rd)
+    }
+  })
+
+let treeLL = Tag Node(Tag Leaf(1), Tag Leaf(2))
+let treeLR = Tag Node(Tag Leaf(3), Tag Node(Tag Leaf(4), Tag Leaf(5)))
+let tree   = Tag Node(treeLL, treeLR)
+
+println(strConcat("tree depth = ", intToStr(depth(tree))))
+
+-- ── Match scrutinee is the result of another match ────────────────────────────
+let classify = fn(n) =>
+  match(n) {
+    0 => Tag Zero
+  | _ => if intLt(n, 0) then Tag Neg else Tag Pos
+  }
+
+let describeSign = fn(n) =>
+  match(classify(n)) {
+    Zero => "zero"
+  | Neg  => "negative"
+  | Pos  => "positive"
+  }
+
+println(describeSign(0))
+println(describeSign(-7))
+println(describeSign(3))
+
+-- ── match inside a lambda passed to map ──────────────────────────────────────
+let vals = Tag Cons(Tag Ok(10), Tag Cons(Tag Err, Tag Cons(Tag Ok(30), Tag Nil)))
+
+let unwrapOr0 = fn(v) =>
+  match(v) {
+    Ok(n) => n
+  | Err   => 0
+  }
+
+let unwrapped = map(unwrapOr0, vals)
+let total = foldr(fn(h, acc) => intAdd(h, acc), 0, unwrapped)
+println(strConcat("sum unwrapped Err=0: ", intToStr(total)))
+
+-- ── Variable shadowing inside nested match branches ───────────────────────────
+let x = 100
+let shadowTest = fn(p) =>
+  match(p) {
+    Pair(x, y) =>
+      match(y) {
+        Pair(x, z) => intAdd(x, z)
+      | _ => x
+      }
+  }
+
+println(strConcat("shadow in nested match: ", intToStr(shadowTest(Tag Pair(1, Tag Pair(2, 3))))))
+println(strConcat("outer x still 100: ", intToStr(x)))
+
+-- ── Match on a list of tagged values with two accumulators ───────────────────
+let analyseList = fix(fn(self) =>
+  fn(xs, okSum, errCount) => match(xs) {
+    Nil => Tag Result(okSum, errCount)
+  | Cons(h, t) =>
+      match(h) {
+        Ok(n) => self(t, intAdd(okSum, n), errCount)
+      | Err   => self(t, okSum, intAdd(errCount, 1))
+      }
+  })
+
+let mixedList = Tag Cons(Tag Ok(5), Tag Cons(Tag Err, Tag Cons(Tag Ok(15), Tag Cons(Tag Err, Tag Nil))))
+let analysis  = analyseList(mixedList, 0, 0)
+match(analysis) {
+  Result(s, e) =>
+    println(strConcat("okSum=", strConcat(intToStr(s), strConcat(" errCount=", intToStr(e)))))
+}
+
+-- ── Wildcard in nested position ───────────────────────────────────────────────
+let firstField = fn(t) =>
+  match(t) {
+    Triple(a, _, _) => a
+  }
+
+println(strConcat("firstField Triple(7,_,_) = ", intToStr(firstField(Tag Triple(7, 99, 99)))))
+
+-- ── Match as a direct function argument ──────────────────────────────────────
+let double = fn(x) => intMul(x, 2)
+let r = double(match(Tag Some(21)) { Some(n) => n | None => 0 })
+println(strConcat("double(match Some(21)) = ", intToStr(r)))

@@ -1,0 +1,62 @@
+-- test-heapref.fplang
+-- Tests alloc / getref / dealloc:
+--   * basic alloc then read then dealloc (no crash)
+--   * refs holding different value types
+--   * two refs are independent (different addresses, different values)
+--   * ref passed to a function and read inside
+--   * ref stored in a tagged constructor then extracted and read
+--   * fix loop that allocates fresh refs per iteration
+
+-- Basic alloc / getref / dealloc
+let r = alloc(42)
+println(strConcat("basic int ref: ", intToStr(getref(r))))
+dealloc(r)
+println("dealloc ok")
+
+-- Refs holding different types
+let ri = alloc(99)
+let rs = alloc("hello")
+let rb = alloc(true)
+let rt = alloc(Tag Pair(1, 2))
+println(strConcat("int ref:    ", intToStr(getref(ri))))
+println(strConcat("str ref:    ", getref(rs)))
+println(strConcat("bool ref:   ", showVal(getref(rb))))
+println(strConcat("tagged ref: ", showVal(getref(rt))))
+dealloc(ri)
+dealloc(rs)
+dealloc(rb)
+dealloc(rt)
+
+-- Two refs are independent
+let ra = alloc(10)
+let rb2 = alloc(20)
+println(strConcat("ra=", strConcat(intToStr(getref(ra)), strConcat(" rb=", intToStr(getref(rb2))))))
+dealloc(ra)
+dealloc(rb2)
+
+-- Ref passed to a helper function
+let readDouble = fn(ref) => intMul(getref(ref), 2)
+let rv = alloc(7)
+println(strConcat("readDouble(ref 7) = ", intToStr(readDouble(rv))))
+dealloc(rv)
+
+-- Ref boxed inside a Tag, then unboxed
+let boxedRef = Tag Box(alloc(55))
+let unboxRead = fn(b) => match(b) { Box(ref) => getref(ref) }
+println(strConcat("boxed ref read: ", intToStr(unboxRead(boxedRef))))
+match(boxedRef) { Box(ref) => dealloc(ref) }
+
+-- fix loop that allocates and reads a ref each iteration
+-- Computes sum 1..5 by allocating a fresh ref per step (functional style).
+let sumLoop = fix(fn(self) => fn(xs, acc) => match(xs) {
+    Nil => acc
+  | Cons(h, t) => {
+      let step = alloc(intAdd(acc, h))
+      let next = getref(step)
+      dealloc(step)
+      self(t, next)
+    }
+  })
+
+let ns = Tag Cons(1, Tag Cons(2, Tag Cons(3, Tag Cons(4, Tag Cons(5, Tag Nil)))))
+println(strConcat("sum via per-iter alloc: ", intToStr(sumLoop(ns, 0))))

@@ -3,8 +3,6 @@
 module FPRunner where
 
 import Control.Concurrent (threadDelay)
-import Data.IORef
-import Data.List (intercalate)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import System.IO (hSetBuffering, BufferMode(..), stdin, stdout)

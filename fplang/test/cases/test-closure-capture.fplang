@@ -1,0 +1,58 @@
+-- test-closure-capture.fplang
+-- Tests multi-level closure capture and partial application:
+--   * 3-level nested closure captures from outer scopes
+--   * partial application chain (curried fn applied one arg at a time)
+--   * closures stored in tagged values and called later
+--   * closure returned from a fix loop capturing loop state
+--   * adder factory: each closure captures a distinct value
+
+-- 3-level nested closure captures from outer scopes
+let level3 = fn(a) => fn(b) => fn(c) => intAdd(intAdd(a, b), c)
+let f3 = level3(10)
+let f3b = f3(20)
+println(strConcat("3-level capture 10+20+7 = ", intToStr(f3b(7))))
+
+-- Different partial applications from the same base are independent
+let add10 = level3(10)(0)
+let add20 = level3(20)(0)
+println(strConcat("add10(5)=", strConcat(intToStr(add10(5)), strConcat(" add20(5)=", intToStr(add20(5))))))
+
+-- Partial application stored in a list of closures
+let adders = Tag Cons(level3(1)(0), Tag Cons(level3(2)(0), Tag Cons(level3(3)(0), Tag Nil)))
+let applyTo5 = fix(fn(self) => fn(xs, acc) => match(xs) {
+    Nil => acc
+  | Cons(f, t) => self(t, intAdd(acc, f(5)))
+  })
+println(strConcat("sum of adders applied to 5: (1+5)+(2+5)+(3+5)=21? actual=", intToStr(applyTo5(adders, 0))))
+
+-- Closure capturing a let binding that is itself a closure
+let outer = fn(x) => {
+  let inner = fn(y) => intMul(x, y)
+  fn(z) => intAdd(inner(z), x)
+}
+let g = outer(3)
+println(strConcat("outer(3)(4) = 3*4+3 = 15? actual=", intToStr(g(4))))
+
+-- Closure stored inside a tagged value, extracted and called later
+let boxClosure = fn(f) => Tag Boxed(f)
+let callBox = fn(b, x) => match(b) { Boxed(f) => f(x) }
+let squared = fn(n) => intMul(n, n)
+let sqBox = boxClosure(squared)
+println(strConcat("boxed squared(6) = 36? actual=", intToStr(callBox(sqBox, 6))))
+
+-- fix loop returning a closure that captures loop state
+-- build a function that adds the loop index to its arg
+let makeSumN = fix(fn(self) => fn(n) => {
+    let step = fn(x) => intAdd(x, n)
+    if intLe(n, 0) then step else fn(x) => intAdd(self(intSub(n, 1))(x), step(x))
+  })
+-- makeSumN(3)(0) = add3(0)+add2(0)+add1(0)+add0(0) = 3+2+1+0 = 6
+println(strConcat("makeSumN(3)(10) = (10+3)+(10+2)+(10+1)+10=46? actual=", intToStr(makeSumN(3)(10))))
+
+-- Closure captures variable that is later rebound in outer scope (capture is by value at creation time)
+let captureTest = {
+  let base = 100
+  let snap = fn() => base
+  snap
+}
+println(strConcat("captured base=100: ", intToStr(captureTest())))

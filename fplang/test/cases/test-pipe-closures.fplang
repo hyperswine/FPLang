@@ -1,0 +1,46 @@
+-- test-pipe-closures.fplang
+-- Tests |> pipe operator combined with curried functions, closures, and fix.
+-- Also exercises |> after blocks and |> with partial primitives.
+
+-- Basic pipe: value flows left-to-right
+let double = fn(x) => intMul(x, 2)
+let inc    = fn(x) => intAdd(x, 1)
+
+let r1 = 3 |> double |> inc
+println(strConcat("3 |> double |> inc = ", intToStr(r1)))
+
+-- Curried adder via pipe
+let add = fn(n) => fn(x) => intAdd(x, n)
+let r2 = 10 |> add(5) |> add(3)
+println(strConcat("10 |> add(5) |> add(3) = ", intToStr(r2)))
+
+-- Pipe into a fix-produced function
+let countdown = fix(fn(self) => fn(n) =>
+  if intEq(n, 0) then 0
+  else self(intSub(n, 1)))
+let r3 = 100 |> countdown
+println(strConcat("100 |> countdown = ", intToStr(r3)))
+
+-- Block result piped into a function
+let r4 = {
+  let a = 7
+  let b = 3
+  intMul(a, b)
+} |> double
+println(strConcat("{7*3} |> double = ", intToStr(r4)))
+
+-- Pipe into a closure that captures an outer binding
+let factor = 4
+let scale  = fn(x) => intMul(x, factor)
+let r5 = 5 |> scale |> double
+println(strConcat("5 |> scale(4) |> double = ", intToStr(r5)))
+
+-- Pipe through compose
+let compose = fn(f, g) => fn(x) => f(g(x))
+let r6 = 6 |> compose(double, inc)
+println(strConcat("6 |> compose(double, inc) = ", intToStr(r6)))
+
+-- Pipe with strConcat (string partial)
+let prefix = fn(s) => fn(x) => strConcat(s, intToStr(x))
+let r7 = 42 |> prefix("answer=")
+println(r7)
