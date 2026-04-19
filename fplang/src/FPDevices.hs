@@ -25,7 +25,9 @@
 module FPDevices (defaultVFS) where
 
 import qualified Data.Map.Strict as Map
-import FPInterpreter (ActorM (..), Value (..), VFSHandlers (..), VFSMap)
+import FPInterpreter (ActorM (..), Value (..), VFSHandlers (..), VFSMap, valueToJson)
+import System.Directory (createDirectoryIfMissing)
+import System.FilePath (takeDirectory)
 import System.IO (hPutStrLn, stderr)
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -36,7 +38,7 @@ import System.IO (hPutStrLn, stderr)
 
 counterHandlers :: VFSHandlers
 counterHandlers = VFSHandlers
-  { vhOpen  = \_ -> return (VInt 0)
+  { vhOpen  = \_ _ -> return (VInt 0)
   , vhRead  = \st _ -> case st of
       VInt n -> return (VInt n, VInt (n + 1))
       _      -> return (VInt 0, VInt 1)
@@ -55,7 +57,7 @@ counterHandlers = VFSHandlers
 
 echoHandlers :: VFSHandlers
 echoHandlers = VFSHandlers
-  { vhOpen  = \_ -> return VUnit
+  { vhOpen  = \_ _ -> return VUnit
   , vhRead  = \st _ -> return (st, st)
   , vhWrite = \_ args -> case args of
       (v : _) -> return v
@@ -71,7 +73,7 @@ echoHandlers = VFSHandlers
 
 nullHandlers :: VFSHandlers
 nullHandlers = VFSHandlers
-  { vhOpen  = \_ -> return VUnit
+  { vhOpen  = \_ _ -> return VUnit
   , vhRead  = \st _ -> return (VUnit, st)
   , vhWrite = \st _ -> return st
   , vhClose = \_ -> return ()
@@ -85,7 +87,7 @@ nullHandlers = VFSHandlers
 
 keyboardHandlers :: VFSHandlers
 keyboardHandlers = VFSHandlers
-  { vhOpen  = \_ -> return VUnit
+  { vhOpen  = \_ _ -> return VUnit
   , vhRead  = \st _ -> do
       line <- ActorM $ \_ -> getLine
       return (VStr line, st)
@@ -102,7 +104,7 @@ keyboardHandlers = VFSHandlers
 
 stdoutHandlers :: VFSHandlers
 stdoutHandlers = VFSHandlers
-  { vhOpen  = \_ -> return VUnit
+  { vhOpen  = \_ _ -> return VUnit
   , vhRead  = \st _ -> return (VUnit, st)
   , vhWrite = \st args -> do
       ActorM $ \_ -> case args of
@@ -121,7 +123,7 @@ stdoutHandlers = VFSHandlers
 
 stderrHandlers :: VFSHandlers
 stderrHandlers = VFSHandlers
-  { vhOpen  = \_ -> return VUnit
+  { vhOpen  = \_ _ -> return VUnit
   , vhRead  = \st _ -> return (VUnit, st)
   , vhWrite = \st args -> do
       ActorM $ \_ -> case args of
@@ -129,6 +131,44 @@ stderrHandlers = VFSHandlers
         (v      : _) -> hPutStrLn stderr (show v)
         []           -> return ()
       return st
+  , vhClose = \_ -> return ()
+  , vhSeek  = \st _ -> return st
+  }
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- /files/  (prefix mount)
+-- A virtual directory that maps fplang paths like "/files/report.json" to real
+-- files on the host filesystem (relative to the working directory).
+--
+-- The fd state is VStr <realPath>  (the host path to read/write).
+--
+-- fopen("/files/people.json")     opens ./files/people.json for read/write
+-- fwrite(fd, value)               serialises value to JSON and writes the file
+-- fread(fd)                       reads the file and returns the JSON as VStr
+-- fclose(fd)                      no-op cleanup
+-- ─────────────────────────────────────────────────────────────────────────────
+
+filesHandlers :: VFSHandlers
+filesHandlers = VFSHandlers
+  { vhOpen  = \path _ -> do
+      -- Strip a leading '/' so the path is relative to cwd
+      let realPath = case path of
+                       ('/':rest) -> rest
+                       p          -> p
+      return (VStr realPath)
+  , vhRead  = \st _ -> do
+      case st of
+        VStr realPath -> do
+          contents <- ActorM $ \_ -> readFile realPath
+          return (VStr contents, st)
+        _ -> return (VUnit, st)
+  , vhWrite = \st args -> do
+      case (st, args) of
+        (VStr realPath, v : _) -> ActorM $ \_ -> do
+          createDirectoryIfMissing True (takeDirectory realPath)
+          writeFile realPath (valueToJson v)
+          return st
+        _ -> return st
   , vhClose = \_ -> return ()
   , vhSeek  = \st _ -> return st
   }
@@ -146,4 +186,5 @@ defaultVFS = Map.fromList
   , ("/dev/keyboard", keyboardHandlers)
   , ("/dev/stdout",   stdoutHandlers)
   , ("/dev/stderr",   stderrHandlers)
+  , ("/files/",       filesHandlers)
   ]

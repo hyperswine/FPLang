@@ -6,15 +6,17 @@
 {-# HLINT ignore "Use record patterns" #-}
 {-# HLINT ignore "Use unless" #-}
 
-module FPInterpreter (Expr (..), Pattern (..), Value (..), TypeName, Env, primEnv, ActorState (..), ActorM (..), runProgram, eval, VFSHandlers (..), VFSMap, emptyVFSMap) where
+module FPInterpreter (Expr (..), Pattern (..), Value (..), TypeName, Env, primEnv, ActorState (..), ActorM (..), runProgram, eval, VFSHandlers (..), VFSMap, emptyVFSMap, valueToJson) where
 
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Monad (void, when)
 import Data.IORef
+import Data.List (intercalate, isPrefixOf, sortBy)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, listToMaybe)
+import Data.Ord (comparing, Down (..))
 import System.IO.Unsafe (unsafePerformIO)
 
 -- =============================================================================
@@ -31,7 +33,7 @@ import System.IO.Unsafe (unsafePerformIO)
 --   close : current state                    → ()
 --   seek  : (current state, extra args)      → new state
 data VFSHandlers = VFSHandlers
-  { vhOpen  :: [Value] -> ActorM Value
+  { vhOpen  :: FilePath -> [Value] -> ActorM Value
   , vhRead  :: Value -> [Value] -> ActorM (Value, Value)
   , vhWrite :: Value -> [Value] -> ActorM Value
   , vhClose :: Value -> ActorM ()
@@ -603,6 +605,7 @@ primEnv = Map.fromList
   , ("fwrite",     VPrim "fwrite"     primFWrite)
   , ("fclose",     VPrim "fclose"     primFClose)
   , ("fseek",      VPrim "fseek"      primFSeek)
+  , ("toJson",     VPrim "toJson"     primToJson)
   , ("true",       VBool True)
   , ("false",      VBool False)
   , ("unit",       VUnit)
@@ -772,12 +775,25 @@ nextFD t
   | Map.null t = 3
   | otherwise  = fst (Map.findMax t) + 1
 
+-- | Resolve a path to a handler: exact match first, then longest-prefix match.
+-- This allows mounting a handler at "/files/" to serve any "/files/foo.json" etc.
+resolveHandler :: FilePath -> VFSMap -> Maybe VFSHandlers
+resolveHandler path vfs =
+  case Map.lookup path vfs of
+    Just h  -> Just h
+    Nothing ->
+      listToMaybe
+        [ h
+        | (prefix, h) <- sortBy (comparing (Down . length . fst)) (Map.toList vfs)
+        , prefix `isPrefixOf` path
+        ]
+
 primFOpen :: [Value] -> ActorM Value
 primFOpen (VStr path : extraArgs) = ActorM $ \st -> do
-  case Map.lookup path (actorVFS st) of
+  case resolveHandler path (actorVFS st) of
     Nothing -> error $ "fopen: no virtual file registered at: " ++ show path
     Just handlers -> do
-      initState <- runActorM (vhOpen handlers extraArgs) st
+      initState <- runActorM (vhOpen handlers path extraArgs) st
       stRef     <- newIORef initState
       fdTable   <- readIORef (actorFDTable st)
       let fd    = nextFD fdTable
@@ -833,6 +849,45 @@ primFSeek (VInt fd : extraArgs) = ActorM $ \st -> do
       writeIORef (fdeState entry) newState
       return VUnit
 primFSeek _ = actorFail "fseek: expected an Int file descriptor as first argument"
+
+-- =============================================================================
+-- JSON SERIALISATION
+-- valueToJson converts any fplang Value to a JSON string.
+-- The mapping is:
+--   VInt n           → bare number
+--   VBool b          → true / false
+--   VStr s           → quoted string (with escape sequences)
+--   VUnit            → null
+--   VList vs         → JSON array
+--   VTagged tag flds → {"_tag":"tag","_fields":[...]}
+--   everything else  → quoted string (show)
+-- =============================================================================
+
+valueToJson :: Value -> String
+valueToJson (VInt n)          = show n
+valueToJson (VBool True)      = "true"
+valueToJson (VBool False)     = "false"
+valueToJson VUnit             = "null"
+valueToJson (VStr s)          = "\"" ++ escapeJsonStr s ++ "\""
+valueToJson (VList vs)        = "[" ++ intercalate "," (map valueToJson vs) ++ "]"
+valueToJson (VTagged tag flds) =
+  "{\"_tag\":\"" ++ escapeJsonStr tag ++ "\",\"_fields\":["
+  ++ intercalate "," (map valueToJson flds) ++ "]}"
+valueToJson v                 = "\"" ++ escapeJsonStr (show v) ++ "\""
+
+escapeJsonStr :: String -> String
+escapeJsonStr = concatMap esc
+  where
+    esc '"'  = "\\\""
+    esc '\\' = "\\\\"
+    esc '\n' = "\\n"
+    esc '\r' = "\\r"
+    esc '\t' = "\\t"
+    esc c    = [c]
+
+primToJson :: [Value] -> ActorM Value
+primToJson [v] = return (VStr (valueToJson v))
+primToJson _   = actorFail "toJson: expected exactly one argument"
 
 -- =============================================================================
 -- EXAMPLES  (inline test programs; main entry point is in Main.hs)

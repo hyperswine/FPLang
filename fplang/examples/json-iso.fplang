@@ -1,0 +1,116 @@
+-- json-iso.fplang
+--
+-- Demonstrates using isomorphisms for transparent JSON persistence via the
+-- virtual /files/ directory.
+--
+-- Design
+-- ──────
+-- We define a "PersonDB" branded type that wraps a cons-list of Person records.
+-- An iso PersonDB <-> ConsList is registered so we can pass a PersonDB straight
+-- to any generic list utility (filter, map, fold) without ever unwrapping it
+-- manually at the call site.
+--
+-- When it is time to persist the result we simply do:
+--
+--   fwrite(fd, resultDB)
+--
+-- The /files/ device calls valueToJson internally, so the caller never writes
+-- a single line of serialisation code.  The isomorphism handles structural
+-- reshaping; the VFS device handles format conversion.
+
+-- ── Generic cons-list utilities ──────────────────────────────────────────────
+
+let listFoldr = fix(fn(self) => fn(f, z, xs) =>
+  match(xs) {
+    Nil => z
+  | Cons(h, t) => f(h, self(f, z, t))
+  })
+
+let listMap = fix(fn(self) => fn(f, xs) =>
+  match(xs) {
+    Nil => Tag Nil
+  | Cons(h, t) => Tag Cons(f(h), self(f, t))
+  })
+
+let listFilter = fix(fn(self) => fn(pred, xs) =>
+  match(xs) {
+    Nil => Tag Nil
+  | Cons(h, t) =>
+      if pred(h)
+      then Tag Cons(h, self(pred, t))
+      else self(pred, t)
+  })
+
+let listLen = fn(xs) =>
+  listFoldr(fn(h, acc) => intAdd(1, acc), 0, xs)
+
+-- ── PersonDB type ────────────────────────────────────────────────────────────
+-- Tag Person(name, age, score)
+-- Tag PersonDB(cons-list of Person)
+--
+-- iso PersonDB <-> ConsList lets us use the generic utilities above directly
+-- on a PersonDB value; we only define the forward/backward functions once.
+
+let dbUnwrap = fn(db) => tagPayload(db)       -- PersonDB(xs) -> xs
+let dbWrap   = fn(xs) => Tag PersonDB(xs)     -- xs -> PersonDB(xs)
+
+iso PersonDB ConsList dbUnwrap dbWrap
+
+-- ── Initial dataset ──────────────────────────────────────────────────────────
+
+let p1 = Tag Person("Alice", 30, 92)
+let p2 = Tag Person("Bob",   25, 58)
+let p3 = Tag Person("Carol", 35, 95)
+let p4 = Tag Person("Dave",  28, 74)
+let p5 = Tag Person("Eve",   40, 88)
+let inner = Tag Cons(p1, Tag Cons(p2, Tag Cons(p3, Tag Cons(p4, Tag Cons(p5, Tag Nil)))))
+let db = dbWrap(inner)
+
+-- ── Transformations using generic utilities ───────────────────────────────────
+-- Because the iso is registered we can call dbUnwrap / dbWrap around any
+-- generic list operation.  In a richer runtime the iso registry could be
+-- consulted automatically; here the thin wrappers below capture that intent.
+
+-- Keep only people with a score strictly above 75.
+let highScorers =
+  dbWrap(listFilter(
+    fn(p) => match(p) { Person(name, age, score) => intGt(score, 75) },
+    dbUnwrap(db)))
+
+-- Award every high-scorer a 3-point bonus.
+let withBonus =
+  dbWrap(listMap(
+    fn(p) => match(p) { Person(name, age, score) => Tag Person(name, age, intAdd(score, 3)) },
+    dbUnwrap(highScorers)))
+
+-- ── Diagnostics ──────────────────────────────────────────────────────────────
+
+let total = listLen(dbUnwrap(db))
+let kept  = listLen(dbUnwrap(withBonus))
+
+println(strConcat("Total persons  : ", intToStr(total)))
+println(strConcat("After filter   : ", intToStr(kept)))
+
+-- Confirm the iso is registered.
+let dbIso = iso?(PersonDB, ConsList)
+println(strConcat("PersonDB iso   : ", showVal(dbIso)))
+
+-- ── Persist to /files/ ───────────────────────────────────────────────────────
+-- fopen resolves "/files/" as a prefix mount; the device derives the real
+-- host path "files/people.json" relative to the working directory.
+-- fwrite serialises the value to JSON automatically — no manual conversion.
+
+let fd = fopen("/files/people.json")
+fwrite(fd, withBonus)
+fclose(fd)
+
+println("Wrote files/people.json")
+
+-- ── Round-trip: read the raw JSON back and display it ────────────────────────
+
+let fd2 = fopen("/files/people.json")
+let raw  = fread(fd2)
+fclose(fd2)
+
+println("JSON on disk:")
+println(raw)
