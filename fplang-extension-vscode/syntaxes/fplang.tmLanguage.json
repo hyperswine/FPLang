@@ -1,0 +1,98 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "FPLang",
+  "scopeName": "source.fplang",
+  "fileTypes": ["fplang"],
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#string" },
+    { "include": "#unit" },
+    { "include": "#boolean" },
+    { "include": "#iso-lookup" },
+    { "include": "#keyword-expr" },
+    { "include": "#keyword-control" },
+    { "include": "#keyword-other" },
+    { "include": "#builtin-function" },
+    { "include": "#constructor" },
+    { "include": "#number" },
+    { "include": "#operator" },
+    { "include": "#identifier" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.double-dash.fplang",
+      "match": "--.*$"
+    },
+    "string": {
+      "name": "string.quoted.double.fplang",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.fplang",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "unit": {
+      "name": "constant.language.unit.fplang",
+      "match": "\\(\\)"
+    },
+    "boolean": {
+      "name": "constant.language.boolean.fplang",
+      "match": "\\b(true|false)\\b"
+    },
+    "iso-lookup": {
+      "name": "keyword.operator.iso-lookup.fplang",
+      "match": "\\biso\\?"
+    },
+    "keyword-control": {
+      "name": "keyword.control.fplang",
+      "match": "\\b(if|then|else|match|receive)\\b"
+    },
+    "keyword-expr": {
+      "name": "keyword.other.definition.fplang",
+      "match": "\\b(let|in|fn|iso|fix)\\b"
+    },
+    "keyword-other": {
+      "name": "keyword.other.fplang",
+      "match": "\\b(send|spawn|Tag|type|function|alloc|dealloc|getref)\\b"
+    },
+    "builtin-function": {
+      "name": "support.function.builtin.fplang",
+      "match": "\\b(println|intAdd|intSub|intMul|intDiv|intMod|intNeg|intAbs|intEq|intLt|intLe|intGt|intGe|boolNot|strConcat|strEq|typeEq|intToStr|strToInt|showVal|tagPayload|withIso|fix|listHead|listTail|listLen|listToCons|fopen|fread|fwrite|fclose|fseek|toJson|fromJson|map|filter|foldr|read|write)\\b"
+    },
+    "constructor": {
+      "name": "entity.name.type.fplang",
+      "match": "\\b[A-Z][A-Za-z0-9_']*\\b"
+    },
+    "number": {
+      "name": "constant.numeric.integer.fplang",
+      "match": "-?\\b[0-9]+\\b"
+    },
+    "operator": {
+      "patterns": [
+        {
+          "name": "keyword.operator.arrow.fplang",
+          "match": "=>"
+        },
+        {
+          "name": "keyword.operator.pipe.fplang",
+          "match": "\\|>"
+        },
+        {
+          "name": "keyword.operator.bar.fplang",
+          "match": "(?<![|])\\|(?![>])"
+        },
+        {
+          "name": "keyword.operator.assign.fplang",
+          "match": "(?<![=!<>])=(?![=>])"
+        }
+      ]
+    },
+    "identifier": {
+      "name": "variable.other.fplang",
+      "match": "\\b[a-z_][A-Za-z0-9_']*\\b"
+    }
+  }
+}

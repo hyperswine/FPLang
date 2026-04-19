@@ -1,0 +1,59 @@
+{
+  "name": "fplang",
+  "displayName": "FPLang",
+  "description": "Language support for FPLang — syntax highlighting, semantic tokens, and LSP features",
+  "version": "0.1.0",
+  "publisher": "fplang",
+  "engines": { "vscode": "^1.82.0" },
+  "categories": ["Programming Languages"],
+  "activationEvents": [],
+  "repository": {"url": "github"},
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "fplang",
+        "aliases": ["FPLang", "fplang"],
+        "extensions": [".fplang"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "fplang",
+        "scopeName": "source.fplang",
+        "path": "./syntaxes/fplang.tmLanguage.json"
+      }
+    ],
+    "semanticTokenTypes": [
+      { "id": "letBinding",  "description": "Top-level let binding name" },
+      { "id": "constructor", "description": "Tagged constructor name" },
+      { "id": "builtinFn",   "description": "Built-in primitive function" }
+    ],
+    "semanticTokenScopes": [
+      {
+        "scopes": {
+          "letBinding":  ["variable.other.readwrite.fplang"],
+          "constructor": ["entity.name.type.fplang"],
+          "builtinFn":   ["support.function.fplang"]
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.11"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.82.0",
+    "typescript": "^5.3.3"
+  }
+}
