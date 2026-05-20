@@ -95,6 +95,7 @@ let showRleList = fix(fn(self) => fn(runs) =>
 
 -- ── Lift flat-list operations to RleList via the iso ─────────────────────────
 
+-- should be able to just use from / to that uses the isomorphism
 let rleSum  = fn(r) => listSum(rleFwd(r))
 let rleLen  = fn(r) => listLen(rleFwd(r))
 let rleShow = fn(r) => strConcat("RleList[ ", strConcat(showRleList(rleUnwrap(r)), " ]"))

@@ -6,9 +6,11 @@
 -- representation and then reused for every branded type by "coercing" through
 -- its registered isomorphism.
 --
--- iso A B fwd bkwd
---   registers fwd : A -> B  and  bkwd : B -> A  in the iso registry.
---   iso?(A, B)  looks up the pair and returns Just(Pair(fwd, bkwd)) | Nothing.
+-- iso A B = (f, g)
+--   registers f : A -> B  and  g : B -> A  in the iso registry.
+--   from(v)     looks up the iso whose source type matches v's tag and applies f.
+--   to(A, v)    looks up the iso registered for branded type A and applies g(v).
+--   iso?(A, B)  looks up the pair and returns Just(Pair(f, g)) | Nothing.
 
 -- ── Generic cons-list utilities ──────────────────────────────────────────────
 -- These functions deal only with Cons/Nil; they know nothing about any brand.
@@ -52,15 +54,16 @@ let listLen = fn(xs) => listFoldr(fn(h, acc) => intAdd(1, acc), 0, xs)
 let natUnwrap = fn(nl) => tagPayload(nl)        -- NatList(xs)  -> xs
 let natWrap   = fn(xs) => Tag NatList(xs)        -- xs           -> NatList(xs)
 
-iso NatList ConsList natUnwrap natWrap
+iso NatList ConsList = (natUnwrap, natWrap)
 
 -- Lift generic operations to NatList via the iso.
-let natSum    = fn(nl)    => listSum(natUnwrap(nl))
-let natLen    = fn(nl)    => listLen(natUnwrap(nl))
-let natMap    = fn(f, nl) => natWrap(listMap(f, natUnwrap(nl)))
-let natFilter = fn(p, nl) => natWrap(listFilter(p, natUnwrap(nl)))
+-- `from(nl)` unwraps the NatList to a raw ConsList; `to(NatList, xs)` rewraps.
+let natSum    = fn(nl)    => listSum(from(nl))
+let natLen    = fn(nl)    => listLen(from(nl))
+let natMap    = fn(f, nl) => to(NatList, listMap(f, from(nl)))
+let natFilter = fn(p, nl) => to(NatList, listFilter(p, from(nl)))
 let natShow   = fn(nl)    =>
-  strConcat("NatList[ ", strConcat(listShowInts(natUnwrap(nl)), " ]"))
+  strConcat("NatList[ ", strConcat(listShowInts(from(nl)), " ]"))
 
 -- ── ScoreList: branded list of exam scores (conceptually 0–100) ──────────────
 -- Different semantic brand, same structural backing.
@@ -68,16 +71,16 @@ let natShow   = fn(nl)    =>
 let scoreUnwrap = fn(sl) => tagPayload(sl)
 let scoreWrap   = fn(xs) => Tag ScoreList(xs)
 
-iso ScoreList ConsList scoreUnwrap scoreWrap
+iso ScoreList ConsList = (scoreUnwrap, scoreWrap)
 
-let scoreSum   = fn(sl)        => listSum(scoreUnwrap(sl))
-let scoreLen   = fn(sl)        => listLen(scoreUnwrap(sl))
+let scoreSum   = fn(sl)        => listSum(from(sl))
+let scoreLen   = fn(sl)        => listLen(from(sl))
 let scoreScale = fn(factor, sl) =>
-  scoreWrap(listMap(fn(s) => intMul(s, factor), scoreUnwrap(sl)))
+  to(ScoreList, listMap(fn(s) => intMul(s, factor), from(sl)))
 -- Bonus: look up the iso at runtime and confirm it is registered.
 let scoreIso   = iso?(ScoreList, ConsList)
 let scoreShow  = fn(sl)        =>
-  strConcat("ScoreList[ ", strConcat(listShowInts(scoreUnwrap(sl)), " ]"))
+  strConcat("ScoreList[ ", strConcat(listShowInts(from(sl)), " ]"))
 
 -- ── isEven helper ────────────────────────────────────────────────────────────
 

@@ -56,7 +56,7 @@ kwN s = kw s *> scn
 -- ─────────────────────────────────────────────────────────────────────────────
 
 keywords :: [String]
-keywords = ["let", "in", "if", "then", "else", "fn", "iso", "send", "receive", "spawn", "type", "function", "alloc", "dealloc", "getref", "true", "false", "Tag", "match"]
+keywords = ["let", "in", "if", "then", "else", "fn", "iso", "from", "to", "send", "receive", "spawn", "type", "function", "alloc", "dealloc", "getref", "true", "false", "Tag", "match"]
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- IDENTIFIERS
@@ -224,17 +224,35 @@ parseSpawn = do
   args <- option [] (sym "(" *> sepBy parseExpr (sym ",") <* sym ")")
   return (Spawn hint fn args)
 
--- iso A B fwdExpr bkwdExpr
+-- iso A B fwdExpr bkwdExpr   OR   iso A B = (fwdExpr, bkwdExpr)
 parseIsoDecl :: Parser Expr
 parseIsoDecl = do
   kw "iso"
   notFollowedBy (char '?')
   a <- upperIdent
   b <- upperIdent
-  fwd <- parseExpr
-  scn
-  bkwd <- parseExpr
+  (fwd, bkwd) <- parseTupleSyntax <|> parseSpaceSyntax
   return (IsoDecl a b fwd bkwd)
+  where
+    -- iso A B = (f, g)
+    parseTupleSyntax = do
+      sym "="
+      scn
+      sym "("
+      scn
+      f <- parseExpr
+      sym ","
+      scn
+      g <- parseExpr
+      scn
+      sym ")"
+      return (f, g)
+    -- iso A B f g  (original positional syntax)
+    parseSpaceSyntax = do
+      f <- parseExpr
+      scn
+      g <- parseExpr
+      return (f, g)
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- ATOMS   (self-delimiting, safe as function arguments)
@@ -246,7 +264,7 @@ parseAtom :: Parser Expr
 parseAtom = chainCalls parseAtomBase
 
 parseAtomBase :: Parser Expr
-parseAtomBase = choice [parseLit, parseBlock, TypeOf <$> (kw "type" *> sym "(" *> parseExpr <* sym ")"), FnOf <$> (kw "function" *> sym "(" *> parseExpr <* sym ")"), Alloc <$> (kw "alloc" *> sym "(" *> parseExpr <* sym ")"), Dealloc <$> (kw "dealloc" *> sym "(" *> parseExpr <* sym ")"), GetRef <$> (kw "getref" *> sym "(" *> parseExpr <* sym ")"), parseLookupIso, parseTagExpr, parseVarOrApp, parseParens]
+parseAtomBase = choice [parseLit, parseBlock, TypeOf <$> (kw "type" *> sym "(" *> parseExpr <* sym ")"), FnOf <$> (kw "function" *> sym "(" *> parseExpr <* sym ")"), Alloc <$> (kw "alloc" *> sym "(" *> parseExpr <* sym ")"), Dealloc <$> (kw "dealloc" *> sym "(" *> parseExpr <* sym ")"), GetRef <$> (kw "getref" *> sym "(" *> parseExpr <* sym ")"), IsoFrom <$> (kw "from" *> sym "(" *> parseExpr <* sym ")"), IsoTo <$> (kw "to" *> sym "(" *> upperIdent) <*> (sym "," *> scn *> parseExpr <* sym ")"), parseLookupIso, parseTagExpr, parseVarOrApp, parseParens]
 
 -- { stmt \n stmt \n stmt }  or  { stmt; stmt; stmt }
 -- chainLets is applied so that `let` bindings are visible to later

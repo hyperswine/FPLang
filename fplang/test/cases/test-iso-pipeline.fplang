@@ -11,13 +11,13 @@
 
 let bagUnwrap = fn(b) => tagPayload(b)
 let bagWrap   = fn(xs) => Tag EvenBag(xs)
-iso EvenBag ConsList bagUnwrap bagWrap
+iso EvenBag ConsList = (bagUnwrap, bagWrap)
 
 -- ── Brand B: NameList — a list of strings ────────────────────────────────────
 
 let nlUnwrap = fn(nl) => tagPayload(nl)
 let nlWrap   = fn(xs) => Tag NameList(xs)
-iso NameList ConsList nlUnwrap nlWrap
+iso NameList ConsList = (nlUnwrap, nlWrap)
 
 -- ── Build EvenBag ─────────────────────────────────────────────────────────────
 

@@ -3,8 +3,16 @@
 let unwrap = fix(fn(self) => fn(v) =>
   if typeEq(type(v), type(Tag MyList)) then tagPayload(v) else v)
 
-iso MyList List fn(v) => unwrap(v) fn(xs) => Tag MyList(xs)
+iso MyList List = (fn(v) => unwrap(v), fn(xs) => Tag MyList(xs))
 
 let result = iso?(MyList, List)
+
+-- from(v) unwraps a MyList to its raw inner value
+let myList = Tag MyList(Tag Cons(1, Tag Cons(2, Tag Nil)))
+println(strConcat("from result: ", showVal(from(myList))))
+
+-- to(MyList, raw) wraps raw back into MyList
+let raw = Tag Cons(3, Tag Cons(4, Tag Nil))
+println(strConcat("to result: ", showVal(to(MyList, raw))))
 
 println(showVal(result))

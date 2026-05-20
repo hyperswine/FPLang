@@ -125,6 +125,8 @@ data Expr
   -- Isomorphism registry
   | IsoDecl TypeName TypeName Expr Expr -- iso A B fwd bkwd  (registers pair)
   | LookupIso TypeName TypeName -- iso A B  → Just (fwd, bkwd) | Nothing
+  | IsoFrom Expr -- from(v)  apply fwd of registered iso whose first type = tag of v
+  | IsoTo TypeName Expr -- to(T, v) apply bkwd of iso registered for branded type T
   -- Direct pattern match
   | Match Expr [(Pattern, Expr)] -- match(scrutinee) { Pat => expr | ... }
   deriving (Show)
@@ -247,6 +249,12 @@ isoRegister im a b fwd bkwd = atomically $ modifyTVar' im (Map.insert (a, b) (fw
 
 isoLookup :: IsoMap -> TypeName -> TypeName -> IO (Maybe (Value, Value))
 isoLookup im a b = Map.lookup (a, b) <$> readTVarIO im
+
+-- | Find the first registered iso whose source type (first key) equals t.
+isoLookupByFirst :: IsoMap -> TypeName -> IO (Maybe (Value, Value))
+isoLookupByFirst im t = do
+  m <- readTVarIO im
+  return $ listToMaybe [ pair | ((a, _), pair) <- Map.toList m, a == t ]
 
 -- -----------------------------------------------------------------------------
 -- § Registry  (process-global actor directory: ActorId → Mailbox)
@@ -526,6 +534,28 @@ eval env = \case
     return $ case mr of
       Nothing -> VTagged "Nothing" []
       Just (fwd, bk) -> VTagged "Just" [VTagged "Pair" [fwd, bk]]
+
+  -- IsoFrom: apply the forward function of the iso whose first type matches
+  --          the tag of the evaluated argument.
+  IsoFrom e -> do
+    v <- eval env e
+    st <- getActorState
+    case v of
+      VTagged t _ -> do
+        mr <- liftIO $ isoLookupByFirst (actorIsoMap st) t
+        case mr of
+          Nothing       -> actorFail $ "from: no iso registered with source type " ++ t
+          Just (fwd, _) -> applyFn fwd [v]
+      _ -> actorFail $ "from: expected a tagged value, got " ++ show v
+
+  -- IsoTo: apply the backward function of the iso registered for branded type T.
+  IsoTo t e -> do
+    v <- eval env e
+    st <- getActorState
+    mr <- liftIO $ isoLookupByFirst (actorIsoMap st) t
+    case mr of
+      Nothing        -> actorFail $ "to: no iso registered for type " ++ t
+      Just (_, bkwd) -> applyFn bkwd [v]
 
   -- Match: evaluate scrutinee then find first matching clause.
   Match scrutinee clauses -> do
