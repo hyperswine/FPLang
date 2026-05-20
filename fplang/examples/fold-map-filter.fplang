@@ -35,15 +35,15 @@ let isEven = fix(fn(self) => fn(n) =>
 
 let xs = Tag Cons(1, Tag Cons(2, Tag Cons(3, Tag Cons(4, Tag Cons(5, Tag Nil)))))
 
-let sum     = foldr(fn(h, acc) => intAdd(h, acc), 0, xs)
-let product = foldr(fn(h, acc) => intMul(h, acc), 1, xs)
-let length  = foldr(fn(h, acc) => intAdd(1, acc), 0, xs)
-let doubled = map(fn(x) => intMul(x, 2), xs)
-let evens   = filter(isEven, xs)
+let sum     = xs |> foldr(fn(h, acc) => intAdd(h, acc), 0, _)
+let product = xs |> foldr(fn(h, acc) => intMul(h, acc), 1, _)
+let length  = xs |> foldr(fn(h, acc) => intAdd(1, acc),  0, _)
+let doubled = xs |> map(fn(x) => intMul(x, 2), _)
+let evens   = xs |> filter(isEven, _)
 
-println(strConcat("list    = ", showIntList(xs)))
-println(strConcat("sum     = ", intToStr(sum)))
-println(strConcat("product = ", intToStr(product)))
-println(strConcat("length  = ", intToStr(length)))
-println(strConcat("doubled = ", showIntList(doubled)))
-println(strConcat("evens   = ", showIntList(evens)))
+xs      |> showIntList  |> strConcat("list    = ", _) |> println
+sum     |> intToStr     |> strConcat("sum     = ", _) |> println
+product |> intToStr     |> strConcat("product = ", _) |> println
+length  |> intToStr     |> strConcat("length  = ", _) |> println
+doubled |> showIntList  |> strConcat("doubled = ", _) |> println
+evens   |> showIntList  |> strConcat("evens   = ", _) |> println

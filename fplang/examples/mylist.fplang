@@ -77,7 +77,7 @@ let rleWrap   = fn(runs) => Tag RleList(runs)
 let rleFwd  = fn(r) => expand(rleUnwrap(r))
 let rleBkwd = fn(xs) => rleWrap(compress(xs))
 
-iso RleList FlatList rleFwd rleBkwd
+iso RleList FlatList = (rleFwd, rleBkwd)
 
 -- ── Show helpers ─────────────────────────────────────────────────────────────
 
@@ -95,10 +95,10 @@ let showRleList = fix(fn(self) => fn(runs) =>
 
 -- ── Lift flat-list operations to RleList via the iso ─────────────────────────
 
--- should be able to just use from / to that uses the isomorphism
-let rleSum  = fn(r) => listSum(rleFwd(r))
-let rleLen  = fn(r) => listLen(rleFwd(r))
-let rleShow = fn(r) => strConcat("RleList[ ", strConcat(showRleList(rleUnwrap(r)), " ]"))
+-- Lift flat-list operations to RleList via the iso
+let rleSum  = fn(r) => r |> rleFwd |> listSum
+let rleLen  = fn(r) => r |> rleFwd |> listLen
+let rleShow = fn(r) => r |> rleUnwrap |> showRleList |> strConcat(_, " ]") |> strConcat("RleList[ ", _)
 
 -- ── Demo ─────────────────────────────────────────────────────────────────────
 
@@ -109,19 +109,19 @@ let r2 = Tag Cons(Tag Run(2, 2), r3)
 let runs = Tag Cons(Tag Run(3, 1), r2)
 let rle = rleWrap(runs)
 
-println(rleShow(rle))
-println(strConcat("  expanded  = ", listShowInts(rleFwd(rle))))
-println(strConcat("  sum       = ", intToStr(rleSum(rle))))
-println(strConcat("  length    = ", intToStr(rleLen(rle))))
+rle |> rleShow                       |> println
+rle |> rleFwd |> listShowInts        |> strConcat("  expanded  = ", _) |> println
+rle |> rleSum |> intToStr            |> strConcat("  sum       = ", _) |> println
+rle |> rleLen |> intToStr            |> strConcat("  length    = ", _) |> println
 
 -- Round-trip: flat -> compress -> RleList -> expand -> flat
 let flat = Tag Cons(5, Tag Cons(5, Tag Cons(6, Tag Cons(7, Tag Cons(7, Tag Cons(7, Tag Nil))))))
 let compressed = rleBkwd(flat)
 
-println(strConcat("flat       = ", listShowInts(flat)))
-println(strConcat("compressed = ", rleShow(compressed)))
-println(strConcat("round-trip = ", listShowInts(rleFwd(compressed))))
+flat       |> listShowInts           |> strConcat("flat       = ", _) |> println
+compressed |> rleShow                |> strConcat("compressed = ", _) |> println
+compressed |> rleFwd |> listShowInts |> strConcat("round-trip = ", _) |> println
 
 -- Confirm the iso is registered
 let rleIso = iso?(RleList, FlatList)
-println(strConcat("iso found  = ", showVal(rleIso)))
+rleIso |> showVal |> strConcat("iso found  = ", _) |> println

@@ -26,7 +26,7 @@
 let dbUnwrap = fn(db) => tagPayload(db)
 let dbWrap   = fn(xs) => Tag PersonDB(xs)
 
-iso PersonDB ConsList dbUnwrap dbWrap
+iso PersonDB ConsList = (dbUnwrap, dbWrap)
 
 -- ── Seed the file with initial data ─────────────────────────────────────────
 
@@ -57,9 +57,9 @@ println("--- after filter(score > 75) + map(+3 bonus) ---")
 
 let resultDB = read("/files/people.json") |> fromJson
 
-let countPeople = fn(db) => foldr(fn(h, acc) => intAdd(1, acc), 0, db)
+let countPeople = fn(db) => db |> foldr(fn(h, acc) => intAdd(1, acc), 0, _)
 
-println(strConcat("People in result: ", intToStr(countPeople(resultDB))))
+resultDB |> countPeople |> intToStr |> strConcat("People in result: ", _) |> println
 
 let printNames = fix(fn(self) => fn(xs) =>
   match(xs) {
@@ -73,4 +73,4 @@ let printNames = fix(fn(self) => fn(xs) =>
       }
   })
 
-printNames(dbUnwrap(resultDB))
+resultDB |> dbUnwrap |> printNames

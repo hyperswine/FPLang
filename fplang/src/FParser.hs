@@ -123,8 +123,8 @@ parsePattern =
 parseExpr :: Parser Expr
 parseExpr = choice [parseLet, try parseIsoDecl, parseIf, parseLam, parseSend, parseReceive, parseMatch, parseSpawn, parsePipe]
 
--- a |> f        desugars to  f(a)
--- a |> f(x)     desugars to  (f(x))(a)   — relies on f being curried/returning a partial fn
+-- a |> f           desugars to  f(a)
+-- a |> f(x, _, y)  desugars to  f(x, a, y)   where _ is the pipe placeholder
 -- Left-associative so  a |> f |> g  ≡  g(f(a))
 parsePipe :: Parser Expr
 parsePipe = do
@@ -134,7 +134,59 @@ parsePipe = do
     void (string "|>")
     scn
     parseAtom
-  return $ foldl (\acc f -> App f [acc]) base steps
+  return $ foldl pipeStep base steps
+  where
+    pipeStep lhs rhs
+      | hasPH rhs = subst lhs rhs
+      | otherwise  = App rhs [lhs]
+
+    -- Check whether an expression contains a bare _ placeholder.
+    hasPH :: Expr -> Bool
+    hasPH (Var "_")        = True
+    hasPH (App f xs)       = hasPH f || any hasPH xs
+    hasPH (Lam _ body)     = hasPH body
+    hasPH (Let _ rhs b)    = hasPH rhs || hasPH b
+    hasPH (If c t e)       = hasPH c || hasPH t || hasPH e
+    hasPH (Seq es)         = any hasPH es
+    hasPH (Tag _ xs)       = any hasPH xs
+    hasPH (Match s cs)     = hasPH s || any (hasPH . snd) cs
+    hasPH (TypeOf e)       = hasPH e
+    hasPH (FnOf e)         = hasPH e
+    hasPH (Alloc e)        = hasPH e
+    hasPH (Dealloc e)      = hasPH e
+    hasPH (GetRef e)       = hasPH e
+    hasPH (IsoFrom e)      = hasPH e
+    hasPH (IsoTo _ e)      = hasPH e
+    hasPH (IsoDecl _ _ e1 e2) = hasPH e1 || hasPH e2
+    hasPH (Send a b c)     = hasPH a || hasPH b || hasPH c
+    hasPH (Fix _ _ body)   = hasPH body
+    hasPH (Receive cs)     = any (hasPH . snd) cs
+    hasPH (Spawn _ f xs)   = hasPH f || any hasPH xs
+    hasPH _                = False
+
+    -- Substitute every _ placeholder in an expression with `val`.
+    subst :: Expr -> Expr -> Expr
+    subst val (Var "_")           = val
+    subst val (App f xs)          = App (subst val f) (map (subst val) xs)
+    subst val (Lam ps body)       = Lam ps (subst val body)
+    subst val (Let n rhs b)       = Let n (subst val rhs) (subst val b)
+    subst val (If c t e)          = If (subst val c) (subst val t) (subst val e)
+    subst val (Seq es)            = Seq (map (subst val) es)
+    subst val (Tag t xs)          = Tag t (map (subst val) xs)
+    subst val (Match s cs)        = Match (subst val s) [(p, subst val e) | (p, e) <- cs]
+    subst val (TypeOf e)          = TypeOf (subst val e)
+    subst val (FnOf e)            = FnOf (subst val e)
+    subst val (Alloc e)           = Alloc (subst val e)
+    subst val (Dealloc e)         = Dealloc (subst val e)
+    subst val (GetRef e)          = GetRef (subst val e)
+    subst val (IsoFrom e)         = IsoFrom (subst val e)
+    subst val (IsoTo t e)         = IsoTo t (subst val e)
+    subst val (IsoDecl t1 t2 e1 e2) = IsoDecl t1 t2 (subst val e1) (subst val e2)
+    subst val (Send a b c)        = Send (subst val a) (subst val b) (subst val c)
+    subst val (Fix f ps body)     = Fix f ps (subst val body)
+    subst val (Receive cs)        = Receive [(p, subst val e) | (p, e) <- cs]
+    subst val (Spawn h f xs)      = Spawn h (subst val f) (map (subst val) xs)
+    subst _ e                     = e
 
 -- let x = rhs              open — body filled in by chainLets
 -- let x = rhs in body      closed
@@ -264,7 +316,7 @@ parseAtom :: Parser Expr
 parseAtom = chainCalls parseAtomBase
 
 parseAtomBase :: Parser Expr
-parseAtomBase = choice [parseLit, parseBlock, TypeOf <$> (kw "type" *> sym "(" *> parseExpr <* sym ")"), FnOf <$> (kw "function" *> sym "(" *> parseExpr <* sym ")"), Alloc <$> (kw "alloc" *> sym "(" *> parseExpr <* sym ")"), Dealloc <$> (kw "dealloc" *> sym "(" *> parseExpr <* sym ")"), GetRef <$> (kw "getref" *> sym "(" *> parseExpr <* sym ")"), IsoFrom <$> (kw "from" *> sym "(" *> parseExpr <* sym ")"), IsoTo <$> (kw "to" *> sym "(" *> upperIdent) <*> (sym "," *> scn *> parseExpr <* sym ")"), parseLookupIso, parseTagExpr, parseVarOrApp, parseParens]
+parseAtomBase = choice [parseLit, parseBlock, TypeOf <$> (kw "type" *> sym "(" *> parseExpr <* sym ")"), FnOf <$> (kw "function" *> sym "(" *> parseExpr <* sym ")"), Alloc <$> (kw "alloc" *> sym "(" *> parseExpr <* sym ")"), Dealloc <$> (kw "dealloc" *> sym "(" *> parseExpr <* sym ")"), GetRef <$> (kw "getref" *> sym "(" *> parseExpr <* sym ")"), IsoFrom <$> (kw "from" *> sym "(" *> parseExpr <* sym ")"), IsoTo <$> (kw "to" *> sym "(" *> upperIdent) <*> (sym "," *> scn *> parseExpr <* sym ")"), parseLookupIso, parseTagExpr, Var "_" <$ lexeme (try (string "_" <* notFollowedBy identChar)), parseVarOrApp, parseParens]
 
 -- { stmt \n stmt \n stmt }  or  { stmt; stmt; stmt }
 -- chainLets is applied so that `let` bindings are visible to later

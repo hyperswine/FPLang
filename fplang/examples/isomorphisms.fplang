@@ -58,12 +58,12 @@ iso NatList ConsList = (natUnwrap, natWrap)
 
 -- Lift generic operations to NatList via the iso.
 -- `from(nl)` unwraps the NatList to a raw ConsList; `to(NatList, xs)` rewraps.
-let natSum    = fn(nl)    => listSum(from(nl))
-let natLen    = fn(nl)    => listLen(from(nl))
-let natMap    = fn(f, nl) => to(NatList, listMap(f, from(nl)))
-let natFilter = fn(p, nl) => to(NatList, listFilter(p, from(nl)))
-let natShow   = fn(nl)    =>
-  strConcat("NatList[ ", strConcat(listShowInts(from(nl)), " ]"))
+let natSum    = fn(nl) => nl |> from(_) |> listSum
+let natLen    = fn(nl) => nl |> from(_) |> listLen
+let natMap    = fn(f, nl) => nl |> from(_) |> listMap(f, _) |> to(NatList, _)
+let natFilter = fn(p, nl) => nl |> from(_) |> listFilter(p, _) |> to(NatList, _)
+let natShow   = fn(nl) =>
+  nl |> from(_) |> listShowInts |> strConcat(_, " ]") |> strConcat("NatList[ ", _)
 
 -- ── ScoreList: branded list of exam scores (conceptually 0–100) ──────────────
 -- Different semantic brand, same structural backing.
@@ -73,14 +73,14 @@ let scoreWrap   = fn(xs) => Tag ScoreList(xs)
 
 iso ScoreList ConsList = (scoreUnwrap, scoreWrap)
 
-let scoreSum   = fn(sl)        => listSum(from(sl))
-let scoreLen   = fn(sl)        => listLen(from(sl))
+let scoreSum   = fn(sl) => sl |> from(_) |> listSum
+let scoreLen   = fn(sl) => sl |> from(_) |> listLen
 let scoreScale = fn(factor, sl) =>
-  to(ScoreList, listMap(fn(s) => intMul(s, factor), from(sl)))
+  sl |> from(_) |> listMap(fn(s) => intMul(s, factor), _) |> to(ScoreList, _)
 -- Bonus: look up the iso at runtime and confirm it is registered.
 let scoreIso   = iso?(ScoreList, ConsList)
-let scoreShow  = fn(sl)        =>
-  strConcat("ScoreList[ ", strConcat(listShowInts(from(sl)), " ]"))
+let scoreShow  = fn(sl) =>
+  sl |> from(_) |> listShowInts |> strConcat(_, " ]") |> strConcat("ScoreList[ ", _)
 
 -- ── isEven helper ────────────────────────────────────────────────────────────
 
@@ -95,24 +95,23 @@ let isEven = fix(fn(self) => fn(n) =>
 let natsInner = Tag Cons(10, Tag Cons(20, Tag Cons(30, Tag Cons(40, Tag Cons(50, Tag Nil)))))
 let nats = natWrap(natsInner)
 
-println(natShow(nats))
-println(strConcat("  sum        = ", intToStr(natSum(nats))))
-println(strConcat("  length     = ", intToStr(natLen(nats))))
-let doubledNats = natMap(fn(x) => intMul(x, 2), nats)
-println(strConcat("  doubled    = ", natShow(doubledNats)))
-let evenNats = natFilter(isEven, nats)
-println(strConcat("  (all even) = ", natShow(evenNats)))
+nats |> natShow |> println
+nats |> natSum  |> intToStr |> strConcat("  sum        = ", _) |> println
+nats |> natLen  |> intToStr |> strConcat("  length     = ", _) |> println
+let doubledNats = nats |> natMap(fn(x) => intMul(x, 2), _)
+doubledNats |> natShow |> strConcat("  doubled    = ", _) |> println
+let evenNats = nats |> natFilter(isEven, _)
+evenNats |> natShow |> strConcat("  (all even) = ", _) |> println
 
 -- ScoreList: 80, 95, 70, 88
 let scoresInner = Tag Cons(80, Tag Cons(95, Tag Cons(70, Tag Cons(88, Tag Nil))))
 let scores = scoreWrap(scoresInner)
 
-println(scoreShow(scores))
-println(strConcat("  sum        = ", intToStr(scoreSum(scores))))
-println(strConcat("  count      = ", intToStr(scoreLen(scores))))
-let halfScores = scoreScale(1, scores)
-println(strConcat("  iso found  = ", showVal(scoreIso)))
+scores |> scoreShow |> println
+scores |> scoreSum  |> intToStr |> strConcat("  sum        = ", _) |> println
+scores |> scoreLen  |> intToStr |> strConcat("  count      = ", _) |> println
+scoreIso |> showVal |> strConcat("  iso found  = ", _) |> println
 
 -- Verify the iso registry entry: natIso?(NatList, ConsList) should be Just(...)
 let natIso = iso?(NatList, ConsList)
-println(strConcat("NatList iso  = ", showVal(natIso)))
+natIso |> showVal |> strConcat("NatList iso  = ", _) |> println
