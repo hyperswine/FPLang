@@ -12,7 +12,9 @@
 let fd = fopen("/dev/echo")
 
 let before = fread(fd)
-println(strConcat("echo before write: ", showVal(before)))
+showVal(before) |> strConcat("echo before write: ", _) |> println(_)
+
+-- println(strConcat("echo before write: ", showVal(before)))
 
 fwrite(fd, "hello from fplang")
 let after1 = fread(fd)

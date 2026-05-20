@@ -23,6 +23,8 @@
 -- Tag Person(name, age, score)
 -- Tag PersonDB(cons-list of Person)
 
+-- Dont need to declare types directly
+
 let dbUnwrap = fn(db) => tagPayload(db)
 let dbWrap   = fn(xs) => Tag PersonDB(xs)
 
