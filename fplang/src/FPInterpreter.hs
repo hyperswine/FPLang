@@ -504,7 +504,8 @@ eval env = \case
     msg <- eval env msgExpr
     let targetId = case targetV of
           VStr s -> s
-          _ -> error "send: actorId must be a Str"
+          VAddr (_, aid) -> aid   -- spawn returns VAddr; allow sending directly to it
+          _ -> error "send: target must be an actor name (Str) or address (VAddr)"
     actorSend targetId msg
     return VUnit
   Receive clauses -> do

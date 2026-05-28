@@ -1,0 +1,205 @@
+-- equations.fplang
+--
+-- Physics formulas and numerical methods, each running in its own actor.
+-- All arithmetic is integer / fixed-point (scaled by 1000 where decimals matter).
+--
+-- Each formula is defined as a body function.  A fresh single-shot actor is
+-- spawned per query: it handles exactly one message then exits.  The spawned
+-- address (VAddr) is used directly with `send`, so no global name is needed.
+--
+-- Actors / formulas:
+--   kinBody    – v = v0 + a·t  and  d = v0·t + a·t²/2
+--   ohmBody    – V = I·R  (milliamps × ohms → millivolts)
+--   sqrtBody   – floor(√n) via Newton-Raphson
+--   bisBody    – floor(√n) via bisection
+--   energyBody – KE = m·v²/2  and  W = F·d
+--   eulerBody  – Euler integration of  dv/dt = F/m  (fixed-point, milli-units)
+
+-- ── helper: cosmetic section header ──────────────────────────────────────────
+let header = fn(label) =>
+  println(strConcat("── ", strConcat(label, " ──")))
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- FORMULA BODIES  (each is fn() => receive { ... })
+-- Spawn a fresh instance with  spawn "hint" bodyFn  for every query.
+-- The returned VAddr can be passed directly to `send`.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Kinematics: v = v0 + a·t,  d = v0·t + a·t²/2
+let kinBody = fn() =>
+  receive {
+    KinQuery(v0, a, t, replyTo) => {
+      let finalVel = intAdd(v0, intMul(a, t))
+      let disp     = intAdd(intMul(v0, t), intDiv(intMul(a, intMul(t, t)), 2))
+      send replyTo Tag KinResult(finalVel, disp)
+    }
+  }
+
+-- Ohm's Law: V = I·R  (milliamps × ohms = millivolts)
+let ohmBody = fn() =>
+  receive {
+    OhmQuery(i, r, replyTo) => send replyTo Tag OhmResult(intMul(i, r))
+  }
+
+-- Newton-Raphson integer sqrt: floor(√n)
+-- Recurrence: x_{k+1} = (x_k + n/x_k) / 2  until x_{k+1} ≥ x_k.
+let newtSqrt = fix(fn(self) => fn(n, x) =>
+  let xn = intDiv(intAdd(x, intDiv(n, x)), 2) in
+  if intGe(xn, x) then x
+  else self(n, xn))
+
+let sqrtBody = fn() =>
+  receive {
+    SqrtQuery(n, replyTo) => {
+      let root = if intEq(n, 0) then 0 else newtSqrt(n, intAdd(intDiv(n, 2), 1))
+      send replyTo Tag SqrtResult(root)
+    }
+  }
+
+-- Bisection integer sqrt: largest x with x² ≤ n.
+let bisect = fix(fn(self) => fn(n, lo, hi) =>
+  if intGe(intAdd(lo, 1), hi) then lo
+  else
+    let mid  = intDiv(intAdd(lo, hi), 2) in
+    let mid2 = intMul(mid, mid) in
+    if intEq(mid2, n) then mid
+    else if intLt(mid2, n) then self(n, mid, hi)
+    else self(n, lo, mid))
+
+let bisBody = fn() =>
+  receive {
+    BisQuery(n, replyTo) => {
+      let root = if intEq(n, 0) then 0 else bisect(n, 1, n)
+      send replyTo Tag BisResult(root)
+    }
+  }
+
+-- Kinetic energy and work: KE = m·v²/2,  W = F·d
+let energyBody = fn() =>
+  receive {
+    EnergyQuery(m, v, f, d, replyTo) => {
+      let ke   = intDiv(intMul(m, intMul(v, v)), 2)
+      let work = intMul(f, d)
+      send replyTo Tag EnergyResult(ke, work)
+    }
+  }
+
+-- Euler integration of dv/dt = F/m.
+-- State in milli-units (mm/s, mm) for integer arithmetic.
+let eulerRun = fix(fn(self) => fn(v, x, a, dt, steps) =>
+  if intEq(steps, 0) then Tag EulerState(v, x)
+  else
+    let vn = intAdd(v, intDiv(intMul(a, dt), 1000)) in
+    let xn = intAdd(x, intDiv(intMul(v, dt), 1000)) in
+      self(vn, xn, a, dt, intSub(steps, 1)))
+
+let eulerBody = fn() =>
+  receive {
+    EulerQuery(m, f, dt, steps, replyTo) => {
+      let a = intDiv(f, m)
+      match(eulerRun(0, 0, a, dt, steps)) {
+        EulerState(v, x) => send replyTo Tag EulerResult(v, x)
+      }
+    }
+  }
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- QUERIES  –  spawn a fresh actor per query, send to its address, receive reply
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- 1. Kinematics: v0=10 m/s, a=3 m/s², t=4 s
+--    v = 22 m/s,  d = 64 m
+header("Kinematics  v = v0 + a·t,  d = v0·t + a·t²/2")
+let k1 = spawn "kinematics" kinBody
+send k1 Tag KinQuery(10, 3, 4, "main")
+receive {
+  KinResult(v, d) => {
+    println("  v0=10 m/s  a=3 m/s²  t=4 s")
+    println(strConcat("  final velocity  = ", strConcat(intToStr(v), " m/s   (expected 22)")))
+    println(strConcat("  displacement    = ", strConcat(intToStr(d), " m     (expected 64)")))
+  }
+}
+
+-- 2. Newton's 2nd law: F=24 N, m=8 kg → a=3 m/s², from rest over 5 s
+--    v = 15 m/s,  d = 37 m
+header("Newton F=ma  →  kinematics from rest")
+let k2 = spawn "kinematics" kinBody
+send k2 Tag KinQuery(0, 3, 5, "main")
+receive {
+  KinResult(v, d) => {
+    println("  m=8 kg  F=24 N  →  a=3 m/s²  t=5 s (from rest)")
+    println(strConcat("  velocity     = ", strConcat(intToStr(v), " m/s   (expected 15)")))
+    println(strConcat("  displacement = ", strConcat(intToStr(d), " m     (expected 37)")))
+  }
+}
+
+-- 3. Ohm's Law: I=240 mA, R=15 Ω → V=3600 mV = 3.6 V
+header("Ohm's Law  V = I·R")
+let o1 = spawn "ohm" ohmBody
+send o1 Tag OhmQuery(240, 15, "main")
+receive {
+  OhmResult(v) => {
+    println("  I=240 mA  R=15 Ω")
+    println(strConcat("  voltage = ", strConcat(intToStr(v), " mV  (= 3.600 V, expected 3600)")))
+  }
+}
+
+-- 4. Newton-Raphson sqrt
+header("Newton-Raphson  floor(√n)")
+let s1 = spawn "sqrt" sqrtBody
+send s1 Tag SqrtQuery(144, "main")
+receive {
+  SqrtResult(r) => println(strConcat("  floor(sqrt(144))  = ", strConcat(intToStr(r), "   (expected 12)")))
+}
+let s2 = spawn "sqrt" sqrtBody
+send s2 Tag SqrtQuery(2500, "main")
+receive {
+  SqrtResult(r) =>
+    println(strConcat("  floor(sqrt(2500)) = ", strConcat(intToStr(r), "  (expected 50)")))
+}
+let s3 = spawn "sqrt" sqrtBody
+send s3 Tag SqrtQuery(2, "main")
+receive {
+  SqrtResult(r) =>
+    println(strConcat("  floor(sqrt(2))    = ", strConcat(intToStr(r), "    (expected 1)")))
+}
+
+-- 5. Bisection sqrt
+header("Bisection  floor(√n)")
+let b1 = spawn "bisect" bisBody
+send b1 Tag BisQuery(225, "main")
+receive {
+  BisResult(r) =>
+    println(strConcat("  floor(sqrt(225))  = ", strConcat(intToStr(r), "  (expected 15)")))
+}
+let b2 = spawn "bisect" bisBody
+send b2 Tag BisQuery(7, "main")
+receive {
+  BisResult(r) =>
+    println(strConcat("  floor(sqrt(7))    = ", strConcat(intToStr(r), "    (expected 2)")))
+}
+
+-- 6. Energy: m=70 kg, v=9 m/s → KE=2835 J;  F=50 N, d=12 m → W=600 J
+header("Energy  KE = m·v²/2,  W = F·d")
+let e1 = spawn "energy" energyBody
+send e1 Tag EnergyQuery(70, 9, 50, 12, "main")
+receive {
+  EnergyResult(ke, work) => {
+    println(strConcat("  m=70 kg  v=9 m/s   →  KE = ", strConcat(intToStr(ke),  " J  (expected 2835)")))
+    println(strConcat("  F=50 N   d=12 m    →  W  = ", strConcat(intToStr(work), " J   (expected 600)")))
+  }
+}
+
+-- 7. Euler: m=2 kg, F=4000 mN = 4 N, dt=100 ms, 10 steps (= 1 s)
+--    a = 2 m/s²  →  after 1 s: v ≈ 2000 mm/s,  x ≈ 900 mm (Euler under-shoots)
+header("Euler integration  dv/dt = F/m  (fixed-point, milli-units)")
+let eu1 = spawn "euler" eulerBody
+send eu1 Tag EulerQuery(2, 4000, 100, 10, "main")
+receive {
+  EulerResult(v, x) => {
+    println("  m=2 kg  F=4 N  dt=0.1 s  10 steps  (a=2 m/s²)")
+    println(strConcat("  final v = ", strConcat(intToStr(v), " mm/s  (expected ~2000)")))
+    println(strConcat("  final x = ", strConcat(intToStr(x), " mm    (expected ~1000, Euler under-shoots)")))
+  }
+}
+-- All arithmetic is integer / fixed-point (scaled by 1000 where decimals matter).
