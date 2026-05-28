@@ -6,6 +6,7 @@ import Control.Concurrent (threadDelay)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import System.IO (hSetBuffering, BufferMode(..), stdin, stdout)
+import System.FilePath (takeDirectory)
 import FPDevices (defaultVFS)
 import FPInterpreter
 import FParser
@@ -331,7 +332,7 @@ runSrc name src =
   case parseFile name src of
     Left err -> putStrLn $ "Parse error:\n" ++ err
     Right ast -> do
-      _ <- runProgram primEnv emptyVFSMap ast
+      _ <- runProgram primEnv emptyVFSMap "." ast
       return ()
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -340,25 +341,27 @@ runSrc name src =
 
 testMain :: IO ()
 testMain = do
+  -- Wire up the parser for ImportModule (break the FPInterpreter/FParser cycle)
+  installParser parseFile
   -- Original AST-level examples
   putStrLn "── Example 1: type/1 reflection ──"
-  _ <- runProgram primEnv emptyVFSMap example1
+  _ <- runProgram primEnv emptyVFSMap "." example1
 
   putStrLn "\n── Example 2: RC allocator ──"
-  _ <- runProgram primEnv emptyVFSMap example2
+  _ <- runProgram primEnv emptyVFSMap "." example2
 
   putStrLn "\n── Example 3: actor send/receive ──"
-  _ <- runProgram primEnv emptyVFSMap example3
+  _ <- runProgram primEnv emptyVFSMap "." example3
   threadDelay 100000
 
   putStrLn "\n── Example 4: function/1 reflection ──"
-  _ <- runProgram primEnv emptyVFSMap example4
+  _ <- runProgram primEnv emptyVFSMap "." example4
 
   putStrLn "\n── Example 5: fix combinator ──"
-  _ <- runProgram primEnv emptyVFSMap example5
+  _ <- runProgram primEnv emptyVFSMap "." example5
 
   putStrLn "\n── Example 6: iso registry ──"
-  _ <- runProgram primEnv emptyVFSMap example6
+  _ <- runProgram primEnv emptyVFSMap "." example6
 
   -- Parser test suite
   putStrLn ""
@@ -373,11 +376,12 @@ testMain = do
 
 -- | Run a .fplang source file against the default VFS
 runSrcWithVFS :: String -> String -> IO ()
-runSrcWithVFS name src =
-  case parseFile name src of
+runSrcWithVFS filePath src = do
+  installParser parseFile
+  case parseFile filePath src of
     Left err -> putStrLn $ "Parse error:\n" ++ err
     Right ast -> do
-      _ <- runProgram primEnv defaultVFS ast
+      _ <- runProgram primEnv defaultVFS filePath ast
       return ()
 
 -- | Run several VFS example files in sequence
@@ -398,10 +402,11 @@ main = do
     ("--vfs" : paths) -> vfsMain paths
     [path] -> do
       src <- readFile path
+      installParser parseFile
       case parseFile path src of
         Left err -> putStrLn ("Parse error:\n" ++ err) >> exitFailure
         Right ast -> do
-          _ <- runProgram primEnv defaultVFS ast
+          _ <- runProgram primEnv defaultVFS path ast
           return ()
     _ -> do
       putStrLn "Usage: fplang [--vfs file1.fplang ...] <file.fplang>"

@@ -1,0 +1,50 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- modules.fplang  ── demonstrate records, structures, signatures, and import
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- 1. Plain record literals and field access
+let person = { name = "Alice", age = 30 }
+let greeting = strConcat("Hello, ", person.name)
+println(greeting)
+println(intToStr(person.age))
+
+-- 2. Record update
+let older = person { age = 31 }
+println(intToStr(older.age))
+
+-- 3. structure — a named module (ML-style)
+structure Math = {
+  let add = fn(a, b) => intAdd(a, b)
+  let mul = fn(a, b) => intMul(a, b)
+  let square = fn(x) => intMul(x, x)
+}
+
+println(intToStr(Math.add(3, 4)))
+println(intToStr(Math.square(5)))
+
+-- 4. sig — runtime no-op (just documentation)
+sig MathSig = {
+  val add
+  val mul
+  val square
+}
+
+-- 5. Functor: a function that takes a structure and returns a new structure
+let mkVerboseMath = fn(Base) => {
+  add = fn(a, b) => {
+    let r = Base.add(a, b)
+    r
+  },
+  mul = fn(a, b) => {
+    let r = Base.mul(a, b)
+    r
+  }
+}
+
+let VerboseMath = mkVerboseMath(Math)
+println(intToStr(VerboseMath.add(10, 20)))
+println(intToStr(VerboseMath.mul(6, 7)))
+
+-- 6. Nested field access via |> pipe
+let nums = { data = { x = 100, y = 200 } }
+println(intToStr(nums.data.x))

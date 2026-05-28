@@ -1,0 +1,21 @@
+-- utils.fplang — a small utility library to be imported
+structure StringUtils = {
+  let repeat = fn(s, n) => {
+    let go = fix(fn(go) => fn(acc, k) =>
+      if intEq(k, 0) then acc
+      else go(strConcat(acc, s), intSub(k, 1)))
+    go("", n)
+  }
+  let join = fix(fn(join) => fn(sep, xs) =>
+    match(xs) {
+      Nil => ""
+      | Cons(h, Nil) => h
+      | Cons(h, t) => strConcat(h, strConcat(sep, join(sep, t)))
+    })
+}
+
+structure MathUtils = {
+  let square = fn(x) => intMul(x, x)
+  let cube   = fn(x) => intMul(x, intMul(x, x))
+  let abs    = fn(x) => if intLt(x, 0) then intNeg(x) else x
+}

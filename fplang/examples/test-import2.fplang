@@ -1,0 +1,9 @@
+import Utils from "utils.fplang"
+
+println(Utils.StringUtils.repeat("ab", 3))
+
+let xs = Tag Cons("x", Tag Cons("y", Tag Cons("z", Tag Nil)))
+
+println(Utils.StringUtils.join(", ", xs))
+println(intToStr(Utils.MathUtils.square(7)))
+println(intToStr(Utils.MathUtils.cube(3)))

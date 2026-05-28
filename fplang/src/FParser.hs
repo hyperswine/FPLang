@@ -4,6 +4,7 @@
 {-# HLINT ignore "Use <$>" #-}
 
 module FParser (parseExpr, parseProgram, parseFile) where
+-- parseFile is also installed into FPInterpreter.parseFileRef by FPRunner
 
 import Control.Monad (void)
 import Data.Void (Void)
@@ -56,7 +57,11 @@ kwN s = kw s *> scn
 -- ─────────────────────────────────────────────────────────────────────────────
 
 keywords :: [String]
-keywords = ["let", "in", "if", "then", "else", "fn", "iso", "from", "to", "send", "receive", "spawn", "type", "function", "alloc", "dealloc", "getref", "true", "false", "Tag", "match"]
+keywords = ["let", "in", "if", "then", "else", "fn", "iso", "from", "to",
+            "send", "receive", "spawn", "type", "function", "alloc", "dealloc",
+            "getref", "true", "false", "Tag", "match",
+            -- module system
+            "structure", "sig", "import"]
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- IDENTIFIERS
@@ -121,7 +126,20 @@ parsePattern =
 -- ─────────────────────────────────────────────────────────────────────────────
 
 parseExpr :: Parser Expr
-parseExpr = choice [parseLet, try parseIsoDecl, parseIf, parseLam, parseSend, parseReceive, parseMatch, parseSpawn, parsePipe]
+parseExpr = choice
+  [ parseLet
+  , try parseIsoDecl
+  , try parseSigDecl
+  , try parseStructure
+  , try parseImport
+  , parseIf
+  , parseLam
+  , parseSend
+  , parseReceive
+  , parseMatch
+  , parseSpawn
+  , parsePipe
+  ]
 
 -- a |> f           desugars to  f(a)
 -- a |> f(x, _, y)  desugars to  f(x, a, y)   where _ is the pipe placeholder
@@ -162,6 +180,9 @@ parsePipe = do
     hasPH (Fix _ _ body)   = hasPH body
     hasPH (Receive cs)     = any (hasPH . snd) cs
     hasPH (Spawn _ f xs)   = hasPH f || any hasPH xs
+    hasPH (RecordLit ps)   = any (hasPH . snd) ps
+    hasPH (FieldGet e _)   = hasPH e
+    hasPH (RecordUpdate e ps) = hasPH e || any (hasPH . snd) ps
     hasPH _                = False
 
     -- Substitute every _ placeholder in an expression with `val`.
@@ -186,14 +207,18 @@ parsePipe = do
     subst val (Fix f ps body)     = Fix f ps (subst val body)
     subst val (Receive cs)        = Receive [(p, subst val e) | (p, e) <- cs]
     subst val (Spawn h f xs)      = Spawn h (subst val f) (map (subst val) xs)
+    subst val (RecordLit ps)      = RecordLit [(k, subst val e) | (k, e) <- ps]
+    subst val (FieldGet e n)      = FieldGet (subst val e) n
+    subst val (RecordUpdate e ps) = RecordUpdate (subst val e) [(k, subst val x) | (k, x) <- ps]
     subst _ e                     = e
 
 -- let x = rhs              open — body filled in by chainLets
 -- let x = rhs in body      closed
+-- Accepts both lowercase and uppercase binding names (uppercase = module/structure value)
 parseLet :: Parser Expr
 parseLet = do
   kw "let"
-  name <- lowerIdent
+  name <- lowerIdent <|> upperIdent
   symN "="
   val <- parseExpr
   body <- optional (kw "in" *> scn *> parseExpr)
@@ -213,11 +238,11 @@ parseIf = do
   f <- parseExpr
   return (If cond t f)
 
--- fn(x, y) => body
+-- fn(x, y) => body   or   fn(Base) => body   (uppercase for functor params)
 parseLam :: Parser Expr
 parseLam = do
   kw "fn"
-  params <- sym "(" *> sepBy lowerIdent (sym ",") <* sym ")"
+  params <- sym "(" *> sepBy (lowerIdent <|> upperIdent) (sym ",") <* sym ")"
   symN "=>"
   body <- parseExpr
   return (Lam params body)
@@ -316,7 +341,24 @@ parseAtom :: Parser Expr
 parseAtom = chainCalls parseAtomBase
 
 parseAtomBase :: Parser Expr
-parseAtomBase = choice [parseLit, parseBlock, TypeOf <$> (kw "type" *> sym "(" *> parseExpr <* sym ")"), FnOf <$> (kw "function" *> sym "(" *> parseExpr <* sym ")"), Alloc <$> (kw "alloc" *> sym "(" *> parseExpr <* sym ")"), Dealloc <$> (kw "dealloc" *> sym "(" *> parseExpr <* sym ")"), GetRef <$> (kw "getref" *> sym "(" *> parseExpr <* sym ")"), IsoFrom <$> (kw "from" *> sym "(" *> parseExpr <* sym ")"), IsoTo <$> (kw "to" *> sym "(" *> upperIdent) <*> (sym "," *> scn *> parseExpr <* sym ")"), parseLookupIso, parseTagExpr, Var "_" <$ lexeme (try (string "_" <* notFollowedBy identChar)), parseVarOrApp, parseParens]
+parseAtomBase = choice
+  [ parseLit
+  , try parseRecord    -- { name = expr, ... }  — must come before parseBlock
+  , parseBlock
+  , TypeOf   <$> (kw "type"    *> sym "(" *> parseExpr <* sym ")")
+  , FnOf     <$> (kw "function"*> sym "(" *> parseExpr <* sym ")")
+  , Alloc    <$> (kw "alloc"   *> sym "(" *> parseExpr <* sym ")")
+  , Dealloc  <$> (kw "dealloc" *> sym "(" *> parseExpr <* sym ")")
+  , GetRef   <$> (kw "getref"  *> sym "(" *> parseExpr <* sym ")")
+  , IsoFrom  <$> (kw "from"    *> sym "(" *> parseExpr <* sym ")")
+  , IsoTo    <$> (kw "to"      *> sym "(" *> upperIdent) <*> (sym "," *> scn *> parseExpr <* sym ")")
+  , parseLookupIso
+  , parseTagExpr
+  , Var "_"  <$  lexeme (try (string "_" <* notFollowedBy identChar))
+  , parseVarOrApp
+  , Var <$> upperIdent    -- structure/module names (uppercase)
+  , parseParens
+  ]
 
 -- { stmt \n stmt \n stmt }  or  { stmt; stmt; stmt }
 -- chainLets is applied so that `let` bindings are visible to later
@@ -356,16 +398,46 @@ parseVarOrApp = Var <$> lowerIdent
 parseParens :: Parser Expr
 parseParens = sym "(" *> parseExpr <* sym ")"
 
--- After any atom, repeatedly consume "(args)" to form chained calls:
---   f(x)(y)  →  App (App (Var "f") [x]) [y]
---   tagPayload(b)(5)  →  App (App ...) [5]
--- Each extra application is wrapped in `try` so a bare '(' that belongs
--- to the surrounding grammar is never consumed.
+-- After any atom, repeatedly consume "(args)" call-chains, ".field" dot-access,
+-- or "{ f = e, ... }" record-update expressions.
+--   f(x)(y)        →  App (App (Var "f") [x]) [y]
+--   r.field        →  FieldGet (Var "r") "field"
+--   r.field(x, y)  →  App (FieldGet (Var "r") "field") [x, y]
+--   r { x = e }    →  RecordUpdate (Var "r") [("x", e)]
+-- Each step uses `try` so lookahead never consumes tokens belonging to the
+-- surrounding grammar.
 chainCalls :: Parser Expr -> Parser Expr
 chainCalls p = do
   base <- p
-  chains <- many (try (sym "(" *> scn *> sepBy parseExpr (sym "," *> scn) <* scn <* sym ")"))
-  return $ foldl App base chains
+  go base
+  where
+    go acc =
+      (try (callStep   acc) >>= go) <|>
+      (try (dotStep    acc) >>= go) <|>
+      (try (updateStep acc) >>= go) <|>
+      return acc
+
+    callStep acc = do
+      args <- sym "(" *> scn *> sepBy parseExpr (sym "," *> scn) <* scn <* sym ")"
+      return (App acc args)
+
+    dotStep acc = do
+      void (char '.')
+      name <- lowerIdent <|> upperIdent    -- uppercase for nested structures
+      return (FieldGet acc name)
+
+    -- record-update:  expr { field = e, ... }
+    -- Requires at least one  lowerIdent =  pair; otherwise the '{' belongs
+    -- to a different construct (e.g. a following block).
+    updateStep acc = do
+      sym "{"
+      scn
+      pairs <- sepBy1 recField (sym "," *> scn)
+      scn
+      sym "}"
+      return (RecordUpdate acc pairs)
+
+    recField = try $ (,) <$> lowerIdent <*> (sym "=" *> scn *> parseExpr)
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- PROGRAM
@@ -392,6 +464,105 @@ parseProgram = do
   where
     -- After sc-based lexemes we're always sitting AT the newline/semicolon. Consume it plus any surrounding whitespace.
     progSep = sc *> (void (char '\n') <|> void (char ';')) *> scn
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- RECORDS
+-- { name = expr, name2 = expr2, ... }  →  RecordLit [(name, expr), ...]
+-- Distinguished from a block by the pattern `lowerIdent =` as first token.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+parseRecord :: Parser Expr
+parseRecord = try $ do
+  sym "{"
+  scn
+  pairs <- sepBy1 field (sym "," *> scn)
+  scn
+  sym "}"
+  return (RecordLit pairs)
+  where
+    field = try $ do
+      name <- lowerIdent
+      sym "="
+      scn
+      val <- parseExpr
+      return (name, val)
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- STRUCTURE  (ML-style named module as a record)
+--
+--   structure Name = {
+--     let x = expr
+--     let y = expr
+--   }
+--
+-- Optionally annotated with a sig:  structure Name : SigName = { ... }
+--
+-- Desugars at parse-time into:
+--   let Name = let x = e1 in let y = e2 in { x = x, y = y }
+-- ─────────────────────────────────────────────────────────────────────────────
+
+parseStructure :: Parser Expr
+parseStructure = do
+  kw "structure"
+  name <- upperIdent
+  optional (sym ":" *> upperIdent)   -- optional : SigName  (ignored at runtime)
+  sym "="
+  scn
+  sym "{"
+  scn
+  stmts <- sepEndBy1 parseExpr structSep
+  scn *> sym "}"
+  let names = collectLetNames stmts
+      body  = chainLets (stmts ++ [RecordLit [(n, Var n) | n <- names]])
+  return (Let name body (Seq []))
+  where
+    collectLetNames = concatMap getLetName
+    getLetName (Let x _ _) = [x]
+    getLetName _            = []
+    structSep = sc *> (void (char ';') <|> void (char '\n')) *> scn
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- SIG  (ML-style signature — runtime no-op, parsed for syntactic completeness)
+--
+--   sig Name = {
+--     val fieldName
+--     val otherField
+--   }
+-- ─────────────────────────────────────────────────────────────────────────────
+
+parseSigDecl :: Parser Expr
+parseSigDecl = do
+  kw "sig"
+  _name <- upperIdent
+  sym "="
+  scn
+  sym "{"
+  scn
+  _fields <- many sigField
+  scn *> sym "}"
+  return (Lit VUnit)   -- no-op at runtime
+  where
+    sigField = do
+      void (lexeme (string "val" <* notFollowedBy identChar))
+      _fn <- lowerIdent
+      sc *> (void (char '\n') <|> void (char ';') <|> pure ()) *> scn
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- IMPORT
+--
+--   import Name from "relative/path.fplang"
+--
+-- Desugars to:  let Name = ImportModule "relative/path.fplang"
+-- Circular-dependency detection and caching happen at eval time.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+parseImport :: Parser Expr
+parseImport = do
+  kw "import"
+  name <- upperIdent
+  kw "from"
+  path <- lexeme (char '"' *> manyTill L.charLiteral (char '"'))
+  return (Let name (ImportModule path) (Seq []))
 
 parseFile :: String -> String -> Either String Expr
 parseFile fname src = case runParser parseProgram fname src of

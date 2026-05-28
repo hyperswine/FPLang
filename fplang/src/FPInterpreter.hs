@@ -6,7 +6,7 @@
 {-# HLINT ignore "Use record patterns" #-}
 {-# HLINT ignore "Use unless" #-}
 
-module FPInterpreter (Expr (..), Pattern (..), Value (..), TypeName, Env, primEnv, ActorState (..), ActorM (..), runProgram, eval, VFSHandlers (..), VFSMap, emptyVFSMap, valueToJson) where
+module FPInterpreter (Expr (..), Pattern (..), Value (..), TypeName, Env, primEnv, ActorState (..), ActorM (..), runProgram, eval, VFSHandlers (..), VFSMap, emptyVFSMap, valueToJson, installParser, collectTopLevelNames, appendCapture) where
 
 import Control.Concurrent
 import Control.Concurrent.STM
@@ -17,6 +17,9 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Ord (comparing, Down (..))
+import Data.Set (Set)
+import qualified Data.Set as Set
+import System.FilePath (takeDirectory, (</>), normalise)
 import System.IO.Unsafe (unsafePerformIO)
 
 -- =============================================================================
@@ -81,6 +84,8 @@ data Value
     VList [Value]
   | -- The metatype returned by type/1  e.g. VType "Int"
     VType String
+  | -- A record: named fields  { x = 1, y = "hi" }
+    VRecord (Map String Value)
 
 instance Show Value where
   show (VInt n) = show n
@@ -94,6 +99,7 @@ instance Show Value where
   show (VAddr a) = "<actor:" ++ show a ++ ">"
   show (VList vs) = "[" ++ commas vs ++ "]"
   show (VType t) = "Type:" ++ t
+  show (VRecord m) = "{ " ++ intercalate ", " [k ++ " = " ++ show v | (k, v) <- Map.toAscList m] ++ " }"
 
 commas :: (Show a) => [a] -> String
 commas = foldr (\x acc -> show x ++ if null acc then "" else ", " ++ acc) ""
@@ -127,6 +133,12 @@ data Expr
   | LookupIso TypeName TypeName -- iso A B  → Just (fwd, bkwd) | Nothing
   | IsoFrom Expr -- from(v)  apply fwd of registered iso whose first type = tag of v
   | IsoTo TypeName Expr -- to(T, v) apply bkwd of iso registered for branded type T
+  -- Records
+  | RecordLit [(String, Expr)]       -- { x = e1, y = e2 }
+  | FieldGet Expr String             -- e.field
+  | RecordUpdate Expr [(String, Expr)] -- e { field = e2, ... }
+  -- Modules / import
+  | ImportModule FilePath            -- load file, return VRecord of its top-level bindings
   -- Direct pattern match
   | Match Expr [(Pattern, Expr)] -- match(scrutinee) { Pat => expr | ... }
   deriving (Show)
@@ -280,13 +292,17 @@ registryLookup reg aid = Map.lookup aid <$> readTVarIO reg
 -- actorVFS: read-only virtual file system shared across all actors in the process.
 -- actorFDTable: per-actor open file-descriptor table (private mutable state).
 data ActorState = ActorState
-  { actorAddr     :: ActorAddr
-  , actorHeap     :: IORef Heap
-  , actorMailbox  :: Mailbox
-  , actorRegistry :: Registry
-  , actorIsoMap   :: IsoMap
-  , actorVFS      :: VFSMap
-  , actorFDTable  :: IORef FDTable
+  { actorAddr        :: ActorAddr
+  , actorHeap        :: IORef Heap
+  , actorMailbox     :: Mailbox
+  , actorRegistry    :: Registry
+  , actorIsoMap      :: IsoMap
+  , actorVFS         :: VFSMap
+  , actorFDTable     :: IORef FDTable
+  -- Module system: shared across all actors in the process.
+  , actorFilePath    :: FilePath                      -- directory of the file being run (for import resolution)
+  , actorImportCache :: TVar (Map FilePath Value)     -- completed imports (path → VRecord)
+  , actorImportStack :: TVar (Set FilePath)           -- currently-loading paths (cycle detection)
   }
 
 -- =============================================================================
@@ -371,6 +387,9 @@ actorSpawn parentState env params body initArgs requestedId = ActorM $ \_ -> do
   childFDTable <- newIORef Map.empty   -- each actor gets its own fresh FD table
   let childAddr = (fst (actorAddr parentState), actualId)
       childState = ActorState childAddr ref mb reg im vfs childFDTable
+                     (actorFilePath parentState)
+                     (actorImportCache parentState)
+                     (actorImportStack parentState)
       baseChildEnv = Map.insert "self" (VAddr childAddr) env
       childEnv = foldr (\(p, v) e -> envExtend p v e) baseChildEnv (zip params initArgs)
   registryRegister reg actualId mb
@@ -415,6 +434,7 @@ typeOf (VPrim _ _) = VType "Fn"
 typeOf (VAddr _) = VType "ActorAddr"
 typeOf (VList _) = VType "List"
 typeOf (VType _) = VType "Type"
+typeOf (VRecord _) = VType "Record"
 
 fnNameOf :: Value -> Value
 fnNameOf (VFn n _ _ _) = VStr n
@@ -564,6 +584,93 @@ eval env = \case
       Nothing -> actorFail $ "match: no matching pattern for " ++ show v
       Just (binds, e) -> eval (Map.union binds env) e
 
+  -- RecordLit: evaluate each field expression, collect into VRecord.
+  RecordLit pairs -> do
+    kvs <- mapM (\(k, e) -> (,) k <$> eval env e) pairs
+    return (VRecord (Map.fromList kvs))
+
+  -- FieldGet: evaluate the record expression, look up the field.
+  FieldGet recExpr field -> do
+    rv <- eval env recExpr
+    case rv of
+      VRecord m -> case Map.lookup field m of
+        Just v  -> return v
+        Nothing -> actorFail $ "field '" ++ field ++ "' not found in record " ++ show rv
+      _ -> actorFail $ "field access '." ++ field ++ "' on non-record: " ++ show rv
+
+  -- RecordUpdate: evaluate the base record and each new field, merge.
+  RecordUpdate recExpr pairs -> do
+    rv <- eval env recExpr
+    case rv of
+      VRecord m -> do
+        kvs <- mapM (\(k, e) -> (,) k <$> eval env e) pairs
+        return (VRecord (Map.union (Map.fromList kvs) m))
+      _ -> actorFail $ "record-update on non-record: " ++ show rv
+
+  -- ImportModule: load a .fplang file, eval it, return VRecord of its top-level bindings.
+  -- Circular imports are detected via actorImportStack.
+  ImportModule path -> do
+    st <- getActorState
+    let dir     = takeDirectory (actorFilePath st)
+        absPath = normalise (dir </> path)
+    -- Check completed-import cache first.
+    cache <- liftIO $ readTVarIO (actorImportCache st)
+    case Map.lookup absPath cache of
+      Just v  -> return v
+      Nothing -> do
+        -- Circular dependency check.
+        stack <- liftIO $ readTVarIO (actorImportStack st)
+        when (Set.member absPath stack) $
+          actorFail $ "circular import detected: " ++ absPath
+                   ++ " (import stack: " ++ show (Set.toList stack) ++ ")"
+        -- Mark as in-progress.
+        liftIO $ atomically $ modifyTVar' (actorImportStack st) (Set.insert absPath)
+        -- Read and parse.
+        src <- liftIO $ readFile absPath
+        ast <- case parseFileForImport absPath src of
+          Left err -> actorFail $ "import parse error in '" ++ absPath ++ "':\n" ++ err
+          Right a  -> return a
+        -- Augment the AST so it returns a VRecord of all top-level bindings.
+        let names  = collectTopLevelNames ast
+            augAst = appendCapture names ast
+        -- Eval in a child state whose file path points at the imported file.
+        let childSt = st { actorFilePath = absPath }
+        result <- liftIO $ runActorM (eval env augAst) childSt
+        -- Store in cache and remove from stack.
+        liftIO $ atomically $ do
+          modifyTVar' (actorImportCache st) (Map.insert absPath result)
+          modifyTVar' (actorImportStack st) (Set.delete absPath)
+        return result
+
+-- Collect the names of all top-level 'let' bindings in a chainLets tree.
+collectTopLevelNames :: Expr -> [String]
+collectTopLevelNames (Let x _ body) = x : collectTopLevelNames body
+collectTopLevelNames (Seq es)       = concatMap collectTopLevelNames es
+collectTopLevelNames _              = []
+
+-- Append a RecordLit capturing all listed names at the deepest Seq/Let tail.
+appendCapture :: [String] -> Expr -> Expr
+appendCapture names expr = go expr
+  where
+    capture = RecordLit [(n, Var n) | n <- names]
+    go (Let x v body) = Let x v (go body)
+    go (Seq es)       = Seq (es ++ [capture])
+    go e              = Seq [e, capture]
+
+-- Forward declaration: FParser is in a different module so we use an IORef
+-- to break the circular dependency.  FPRunner sets this at startup.
+{-# NOINLINE parseFileForImport #-}
+parseFileForImport :: FilePath -> String -> Either String Expr
+parseFileForImport = unsafePerformIO (readIORef parseFileRef)
+
+parseFileRef :: IORef (FilePath -> String -> Either String Expr)
+{-# NOINLINE parseFileRef #-}
+parseFileRef = unsafePerformIO (newIORef (\_ _ -> Left "import: parser not initialised"))
+
+-- | Called by FPRunner at startup to wire up the parser.
+installParser :: (FilePath -> String -> Either String Expr) -> IO ()
+installParser f = writeIORef parseFileRef f
+
 applyFn :: Value -> [Value] -> ActorM Value
 applyFn (VFn _ closedEnv params body) args
   -- concise way to combine args and params into a map so each param has an arg value, then combine args with external env, prioritizing args
@@ -578,15 +685,17 @@ applyFn v _ = actorFail $ "apply: not a function: " ++ show v
 -- a program expression in the context of a "main" actor.
 -- =============================================================================
 
-runProgram :: Env -> VFSMap -> Expr -> IO Value
-runProgram baseEnv vfs prog = do
+runProgram :: Env -> VFSMap -> FilePath -> Expr -> IO Value
+runProgram baseEnv vfs filePath prog = do
   reg <- newRegistry
   im <- newIsoMap
   mb <- atomically newMailbox
   heap <- newIORef emptyHeap
   fdTable <- newIORef Map.empty
+  importCache <- newTVarIO Map.empty
+  importStack <- newTVarIO Set.empty
   let addr = (0, "main")
-      state = ActorState addr heap mb reg im vfs fdTable
+      state = ActorState addr heap mb reg im vfs fdTable filePath importCache importStack
       env0 = Map.insert "self" (VAddr addr) baseEnv
   registryRegister reg "main" mb
   runActorM (eval env0 prog) state
