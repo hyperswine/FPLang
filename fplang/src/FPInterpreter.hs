@@ -615,6 +615,10 @@ primEnv = Map.fromList
   , ("boolNot",    VPrim "boolNot"    primBoolNot)
   , ("strConcat",  VPrim "strConcat"  primStrConcat)
   , ("strEq",      VPrim "strEq"      primStrEq)
+  , ("strLen",     VPrim "strLen"     primStrLen)
+  , ("strHead",    VPrim "strHead"    primStrHead)
+  , ("strTail",    VPrim "strTail"    primStrTail)
+  , ("strSlice",   VPrim "strSlice"   primStrSlice)
   , ("typeEq",     VPrim "typeEq"     primTypeEq)
   , ("intToStr",   VPrim "intToStr"   primIntToStr)
   , ("strToInt",   VPrim "strToInt"   primStrToInt)
@@ -717,6 +721,25 @@ primStrConcat _ = actorFail "strConcat: type error"
 primStrEq :: [Value] -> ActorM Value
 primStrEq [VStr a, VStr b] = return (VBool (a == b))
 primStrEq _ = actorFail "strEq: type error"
+
+primStrLen :: [Value] -> ActorM Value
+primStrLen [VStr s] = return (VInt (length s))
+primStrLen _ = actorFail "strLen: expected a String"
+
+primStrHead :: [Value] -> ActorM Value
+primStrHead [VStr (c:_)] = return (VStr [c])
+primStrHead [VStr []]    = actorFail "strHead: empty string"
+primStrHead _ = actorFail "strHead: expected a String"
+
+primStrTail :: [Value] -> ActorM Value
+primStrTail [VStr (_:cs)] = return (VStr cs)
+primStrTail [VStr []]     = actorFail "strTail: empty string"
+primStrTail _ = actorFail "strTail: expected a String"
+
+-- strSlice(s, start, len) — extract len chars starting at start (0-based)
+primStrSlice :: [Value] -> ActorM Value
+primStrSlice [VStr s, VInt start, VInt len] = return (VStr (take len (drop start s)))
+primStrSlice _ = actorFail "strSlice: expected (String, Int, Int)"
 
 primTypeEq :: [Value] -> ActorM Value
 primTypeEq [VType a, VType b] = return (VBool (a == b))

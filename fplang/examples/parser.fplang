@@ -1,0 +1,309 @@
+-- parser.fplang
+-- A small parser-combinator library, then a parser for files/1.mylog.
+--
+-- Representation
+--   A parser is a function  String -> Result  where
+--     Ok(value, rest)  — success: parsed value + unconsumed input
+--     Err(msg)         — failure with message
+--
+-- Primitives
+--   pChar(c)     — consume exactly the character c
+--   pAny         — consume any single character
+--   pEof         — succeed only at end of input
+--
+-- Combinators
+--   pSeq(p, q, f)  — run p then q, combine results with f
+--   pChoice(p, q)  — try p, if it fails try q (on the original input)
+--   pMap(p, f)     — transform the parsed value with f
+--   pMany0(p)      — 0-or-more p, accumulate into Cons list
+--   pMany1(p)      — 1-or-more p
+--   pSepBy(p, sep) — 0-or-more p separated by sep
+--   pStr(s)        — consume exactly the string s
+--   pSat(pred)     — consume one char satisfying pred
+--
+-- Helpers built on top
+--   digit, letter, alphaNum, space, spaces0, spaces1
+--   digits1, natural (parses an integer)
+--   pLiteral(s)    — alias for pStr
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Primitive: consume one char equal to c
+-- ─────────────────────────────────────────────────────────────────────────────
+
+let pChar = fn(c) => fn(input) =>
+  if intEq(strLen(input), 0) then
+    Tag Err(strConcat("expected '", strConcat(c, "' but got EOF")))
+  else if strEq(strHead(input), c) then
+    Tag Ok(c, strTail(input))
+  else
+    Tag Err(strConcat("expected '", strConcat(c, strConcat("' but got '", strConcat(strHead(input), "'")))))
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Primitive: consume any single character
+-- ─────────────────────────────────────────────────────────────────────────────
+
+let pAny = fn(input) =>
+  if intEq(strLen(input), 0) then
+    Tag Err("expected any char but got EOF")
+  else
+    Tag Ok(strHead(input), strTail(input))
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Primitive: succeed only at end of input
+-- ─────────────────────────────────────────────────────────────────────────────
+
+let pEof = fn(input) =>
+  if intEq(strLen(input), 0) then
+    Tag Ok(unit, "")
+  else
+    Tag Err(strConcat("expected EOF but got '", strConcat(strHead(input), "'")))
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- pSat(pred) — consume one char satisfying a predicate
+-- ─────────────────────────────────────────────────────────────────────────────
+
+let pSat = fn(pred) => fn(input) =>
+  if intEq(strLen(input), 0) then
+    Tag Err("unexpected EOF")
+  else
+    let c = strHead(input) in
+      if pred(c) then
+        Tag Ok(c, strTail(input))
+      else
+        Tag Err(strConcat("unexpected '", strConcat(c, "'")))
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- pMap(p, f) — transform the parsed value
+-- ─────────────────────────────────────────────────────────────────────────────
+
+let pMap = fn(p, f) => fn(input) =>
+  match(p(input)) {
+    Ok(v, rest) => Tag Ok(f(v), rest)
+  | Err(msg)    => Tag Err(msg)
+  }
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- pSeq(p, q, f) — run p then q on remaining input, combine with f(v1, v2)
+-- ─────────────────────────────────────────────────────────────────────────────
+
+let pSeq = fn(p, q, f) => fn(input) =>
+  match(p(input)) {
+    Err(msg)     => Tag Err(msg)
+  | Ok(v1, rest1) =>
+      match(q(rest1)) {
+        Err(msg)      => Tag Err(msg)
+      | Ok(v2, rest2) => Tag Ok(f(v1, v2), rest2)
+      }
+  }
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- pThen(p, q) — run p then q, keep only q's result
+-- ─────────────────────────────────────────────────────────────────────────────
+
+let pThen = fn(p, q) => pSeq(p, q, fn(a, v2) => v2)
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- pLeft(p, q) — run p then q, keep only p's result
+-- ─────────────────────────────────────────────────────────────────────────────
+
+let pLeft = fn(p, q) => pSeq(p, q, fn(v1, b) => v1)
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- pChoice(p, q) — try p; if it fails (without consuming), try q
+-- ─────────────────────────────────────────────────────────────────────────────
+
+let pChoice = fn(p, q) => fn(input) =>
+  match(p(input)) {
+    Ok(v, rest) => Tag Ok(v, rest)
+  | Err(_)      => q(input)
+  }
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- pMany0(p) — zero-or-more, returns a Cons/Nil list
+-- ─────────────────────────────────────────────────────────────────────────────
+
+let pMany0 = fix(fn(self) => fn(p) => fn(input) =>
+  match(p(input)) {
+    Err(_)       => Tag Ok(Tag Nil, input)
+  | Ok(v, rest)  =>
+      match(self(p)(rest)) {
+        Err(msg)       => Tag Err(msg)
+      | Ok(vs, rest2)  => Tag Ok(Tag Cons(v, vs), rest2)
+      }
+  })
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- pMany1(p) — one-or-more
+-- ─────────────────────────────────────────────────────────────────────────────
+
+let pMany1 = fn(p) => fn(input) =>
+  match(p(input)) {
+    Err(msg)     => Tag Err(msg)
+  | Ok(v, rest)  =>
+      match(pMany0(p)(rest)) {
+        Err(msg)      => Tag Err(msg)
+      | Ok(vs, rest2) => Tag Ok(Tag Cons(v, vs), rest2)
+      }
+  }
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- pStr(s) — match an exact string
+-- ─────────────────────────────────────────────────────────────────────────────
+
+let pStr = fix(fn(self) => fn(s) => fn(input) =>
+  if intEq(strLen(s), 0)
+  then Tag Ok("", input)
+  else
+    let c = strHead(s) in
+    let rest_s = strTail(s) in
+    match(pChar(c)(input)) {
+      Err(msg)      => Tag Err(msg)
+    | Ok(_, rest_i) =>
+        match(self(rest_s)(rest_i)) {
+          Err(msg)        => Tag Err(msg)
+        | Ok(_, rest_i2)  => Tag Ok(s, rest_i2)
+        }
+    })
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- consToStr — join a Cons list of single-char strings into one string
+-- ─────────────────────────────────────────────────────────────────────────────
+
+let consToStr = fix(fn(self) => fn(cs) =>
+  match(cs) {
+    Nil        => ""
+  | Cons(h, t) => strConcat(h, self(t))
+  })
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Character classes
+-- ─────────────────────────────────────────────────────────────────────────────
+
+let isDigit = fn(c) =>
+  let digits = "0123456789" in
+    fix(fn(self) => fn(s) =>
+      if intEq(strLen(s), 0) then false
+      else if strEq(strHead(s), c) then true
+      else self(strTail(s)))(digits)
+
+let isSpace = fn(c) =>
+  if strEq(c, " ") then true
+  else if strEq(c, "\t") then true
+  else false
+
+let isNewline = fn(c) => strEq(c, "\n")
+
+let digit     = pSat(isDigit)
+let space     = pSat(isSpace)
+let spaces0   = pMap(pMany0(space), consToStr)
+let spaces1   = pMap(pMany1(space), consToStr)
+
+-- digits1 — one-or-more digit chars joined into a string
+let digits1   = pMap(pMany1(digit), consToStr)
+
+-- natural — parse a non-negative integer
+let natural   = pMap(digits1, strToInt)
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- pUntilNewline — consume chars up to (but not including) newline or EOF
+-- ─────────────────────────────────────────────────────────────────────────────
+
+let pUntilNewline = pMap(
+  pMany0(pSat(fn(c) => if isNewline(c) then false else true)),
+  consToStr)
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Log-line parser
+--   Format: YYYY-MM-DD HH:MM  message
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- parse exactly N digits and return the integer
+let pNDigits = fn(n) =>
+  pMap(
+    pMap(pMany1(digit), consToStr),
+    fn(s) => if intEq(strLen(s), n) then strToInt(s) else strToInt(s))
+
+-- date: YYYY-MM-DD
+let pDate =
+  pSeq(pNDigits(4), pThen(pChar("-"), pSeq(pNDigits(2), pThen(pChar("-"), pNDigits(2)),
+    fn(mm, dd) => Tag Date(mm, dd))),
+    fn(yyyy, rest) => match(rest) { Date(mm, dd) => Tag Date(yyyy, mm, dd) })
+
+-- time: HH:MM
+let pTime =
+  pSeq(pNDigits(2), pThen(pChar(":"), pNDigits(2)),
+    fn(hh, mm) => Tag Time(hh, mm))
+
+-- a single log line: date SPACE time TWO-SPACES message
+let pLogLine =
+  pSeq(pDate,
+    pSeq(pChar(" "),
+      pSeq(pTime,
+        pSeq(pStr("  "), pUntilNewline, fn(sep, msg) => msg),
+        fn(t, msg) => Tag TimedMsg(t, msg)),
+      fn(sp, x) => x),
+    fn(d, x) => match(x) { TimedMsg(t, msg) =>
+      match(t) { Time(hh, mm) =>
+        match(d) { Date(yyyy, mo, dd) =>
+          Tag LogEntry(yyyy, mo, dd, hh, mm, msg) }}})
+
+-- skip optional newline between lines
+let pNewline = pChar("\n")
+
+-- pLines — parse all log lines separated by newlines
+let pLines = fix(fn(self) => fn(input) =>
+  if intEq(strLen(input), 0)
+  then Tag Ok(Tag Nil, "")
+  else
+    match(pLogLine(input)) {
+      Err(msg)        => Tag Err(msg)
+    | Ok(entry, rest) =>
+        let rest2 = match(pNewline(rest)) {
+          Ok(_, r) => r
+        | Err(_)   => rest
+        } in
+        match(self(rest2)) {
+          Err(msg)          => Tag Err(msg)
+        | Ok(entries, rest3) => Tag Ok(Tag Cons(entry, entries), rest3)
+        }
+    })
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Pretty-print a LogEntry
+-- ─────────────────────────────────────────────────────────────────────────────
+
+let pad2 = fn(n) =>
+  if intLt(n, 10)
+  then strConcat("0", intToStr(n))
+  else intToStr(n)
+
+let showEntry = fn(e) =>
+  match(e) {
+    LogEntry(yyyy, mo, dd, hh, mm, msg) =>
+      strConcat(intToStr(yyyy),
+        strConcat("-", strConcat(pad2(mo),
+          strConcat("-", strConcat(pad2(dd),
+            strConcat(" ", strConcat(pad2(hh),
+              strConcat(":", strConcat(pad2(mm),
+                strConcat("  ", msg))))))))))
+  }
+
+let printEntries = fix(fn(self) => fn(es) =>
+  match(es) {
+    Nil             => unit
+  | Cons(e, rest)   => { println(showEntry(e)); self(rest) }
+  })
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Run: read the file, parse, print results
+-- ─────────────────────────────────────────────────────────────────────────────
+
+let src = read("/files/1.mylog")
+
+match(pLines(src)) {
+  Err(msg)       => println(strConcat("Parse error: ", msg))
+| Ok(entries, _) => {
+    println("Parsed log entries:")
+    printEntries(entries)
+  }
+}

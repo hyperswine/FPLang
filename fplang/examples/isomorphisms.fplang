@@ -39,9 +39,8 @@ let listFilter = fix(fn(self) => fn(pred, xs) =>
 let listShowInts = fix(fn(self) => fn(xs) =>
   match(xs) {
     Nil => "Nil"
-  | Cons(h, t) =>
-      strConcat(strConcat(intToStr(h), " : "), self(t))
-  })
+  | Cons(h, t) => strConcat(strConcat(intToStr(h), " : "), self(t))}
+)
 
 let listSum = fn(xs) => listFoldr(fn(h, acc) => intAdd(h, acc), 0, xs)
 let listLen = fn(xs) => listFoldr(fn(h, acc) => intAdd(1, acc), 0, xs)
@@ -62,8 +61,7 @@ let natSum    = fn(nl) => nl |> from(_) |> listSum
 let natLen    = fn(nl) => nl |> from(_) |> listLen
 let natMap    = fn(f, nl) => nl |> from(_) |> listMap(f, _) |> to(NatList, _)
 let natFilter = fn(p, nl) => nl |> from(_) |> listFilter(p, _) |> to(NatList, _)
-let natShow   = fn(nl) =>
-  nl |> from(_) |> listShowInts |> strConcat(_, " ]") |> strConcat("NatList[ ", _)
+let natShow   = fn(nl) => nl |> from(_) |> listShowInts |> strConcat(_, " ]") |> strConcat("NatList[ ", _)
 
 -- ── ScoreList: branded list of exam scores (conceptually 0–100) ──────────────
 -- Different semantic brand, same structural backing.
@@ -75,12 +73,10 @@ iso ScoreList ConsList = (scoreUnwrap, scoreWrap)
 
 let scoreSum   = fn(sl) => sl |> from(_) |> listSum
 let scoreLen   = fn(sl) => sl |> from(_) |> listLen
-let scoreScale = fn(factor, sl) =>
-  sl |> from(_) |> listMap(fn(s) => intMul(s, factor), _) |> to(ScoreList, _)
+let scoreScale = fn(factor, sl) => sl |> from(_) |> listMap(fn(s) => intMul(s, factor), _) |> to(ScoreList, _)
 -- Bonus: look up the iso at runtime and confirm it is registered.
 let scoreIso   = iso?(ScoreList, ConsList)
-let scoreShow  = fn(sl) =>
-  sl |> from(_) |> listShowInts |> strConcat(_, " ]") |> strConcat("ScoreList[ ", _)
+let scoreShow  = fn(sl) => sl |> from(_) |> listShowInts |> strConcat(_, " ]") |> strConcat("ScoreList[ ", _)
 
 -- ── isEven helper ────────────────────────────────────────────────────────────
 
