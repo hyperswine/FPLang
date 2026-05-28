@@ -17,7 +17,7 @@
 
 -- ── helper: cosmetic section header ──────────────────────────────────────────
 let header = fn(label) =>
-  println(strConcat("── ", strConcat(label, " ──")))
+  label |> strConcat(_, " ──") |> strConcat("── ", _) |> println
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- FORMULA BODIES  (each is fn() => receive { ... })
@@ -29,8 +29,8 @@ let header = fn(label) =>
 let kinBody = fn() =>
   receive {
     KinQuery(v0, a, t, replyTo) => {
-      let finalVel = intAdd(v0, intMul(a, t))
-      let disp     = intAdd(intMul(v0, t), intDiv(intMul(a, intMul(t, t)), 2))
+      let finalVel = intMul(a, t) |> intAdd(v0, _)
+      let disp     = intMul(t, t) |> intMul(a, _) |> intDiv(_, 2) |> intAdd(intMul(v0, t), _)
       send replyTo Tag KinResult(finalVel, disp)
     }
   }
@@ -44,14 +44,14 @@ let ohmBody = fn() =>
 -- Newton-Raphson integer sqrt: floor(√n)
 -- Recurrence: x_{k+1} = (x_k + n/x_k) / 2  until x_{k+1} ≥ x_k.
 let newtSqrt = fix(fn(self) => fn(n, x) =>
-  let xn = intDiv(intAdd(x, intDiv(n, x)), 2) in
+  let xn = intDiv(n, x) |> intAdd(x, _) |> intDiv(_, 2) in
   if intGe(xn, x) then x
   else self(n, xn))
 
 let sqrtBody = fn() =>
   receive {
     SqrtQuery(n, replyTo) => {
-      let root = if intEq(n, 0) then 0 else newtSqrt(n, intAdd(intDiv(n, 2), 1))
+      let root = if intEq(n, 0) then 0 else intDiv(n, 2) |> intAdd(_, 1) |> newtSqrt(n, _)
       send replyTo Tag SqrtResult(root)
     }
   }
@@ -60,7 +60,7 @@ let sqrtBody = fn() =>
 let bisect = fix(fn(self) => fn(n, lo, hi) =>
   if intGe(intAdd(lo, 1), hi) then lo
   else
-    let mid  = intDiv(intAdd(lo, hi), 2) in
+    let mid  = intAdd(lo, hi) |> intDiv(_, 2) in
     let mid2 = intMul(mid, mid) in
     if intEq(mid2, n) then mid
     else if intLt(mid2, n) then self(n, mid, hi)
@@ -78,7 +78,7 @@ let bisBody = fn() =>
 let energyBody = fn() =>
   receive {
     EnergyQuery(m, v, f, d, replyTo) => {
-      let ke   = intDiv(intMul(m, intMul(v, v)), 2)
+      let ke   = intMul(v, v) |> intMul(m, _) |> intDiv(_, 2)
       let work = intMul(f, d)
       send replyTo Tag EnergyResult(ke, work)
     }
@@ -89,8 +89,8 @@ let energyBody = fn() =>
 let eulerRun = fix(fn(self) => fn(v, x, a, dt, steps) =>
   if intEq(steps, 0) then Tag EulerState(v, x)
   else
-    let vn = intAdd(v, intDiv(intMul(a, dt), 1000)) in
-    let xn = intAdd(x, intDiv(intMul(v, dt), 1000)) in
+    let vn = intMul(a, dt) |> intDiv(_, 1000) |> intAdd(v, _) in
+    let xn = intMul(v, dt) |> intDiv(_, 1000) |> intAdd(x, _) in
       self(vn, xn, a, dt, intSub(steps, 1)))
 
 let eulerBody = fn() =>
@@ -115,8 +115,8 @@ send k1 Tag KinQuery(10, 3, 4, "main")
 receive {
   KinResult(v, d) => {
     println("  v0=10 m/s  a=3 m/s²  t=4 s")
-    println(strConcat("  final velocity  = ", strConcat(intToStr(v), " m/s   (expected 22)")))
-    println(strConcat("  displacement    = ", strConcat(intToStr(d), " m     (expected 64)")))
+    intToStr(v) |> strConcat(_, " m/s   (expected 22)") |> strConcat("  final velocity  = ", _) |> println
+    intToStr(d) |> strConcat(_, " m     (expected 64)") |> strConcat("  displacement    = ", _) |> println
   }
 }
 
@@ -128,8 +128,8 @@ send k2 Tag KinQuery(0, 3, 5, "main")
 receive {
   KinResult(v, d) => {
     println("  m=8 kg  F=24 N  →  a=3 m/s²  t=5 s (from rest)")
-    println(strConcat("  velocity     = ", strConcat(intToStr(v), " m/s   (expected 15)")))
-    println(strConcat("  displacement = ", strConcat(intToStr(d), " m     (expected 37)")))
+    intToStr(v) |> strConcat(_, " m/s   (expected 15)") |> strConcat("  velocity     = ", _) |> println
+    intToStr(d) |> strConcat(_, " m     (expected 37)") |> strConcat("  displacement = ", _) |> println
   }
 }
 
@@ -140,7 +140,7 @@ send o1 Tag OhmQuery(240, 15, "main")
 receive {
   OhmResult(v) => {
     println("  I=240 mA  R=15 Ω")
-    println(strConcat("  voltage = ", strConcat(intToStr(v), " mV  (= 3.600 V, expected 3600)")))
+    intToStr(v) |> strConcat(_, " mV  (= 3.600 V, expected 3600)") |> strConcat("  voltage = ", _) |> println
   }
 }
 
@@ -149,19 +149,20 @@ header("Newton-Raphson  floor(√n)")
 let s1 = spawn "sqrt" sqrtBody
 send s1 Tag SqrtQuery(144, "main")
 receive {
-  SqrtResult(r) => println(strConcat("  floor(sqrt(144))  = ", strConcat(intToStr(r), "   (expected 12)")))
+  SqrtResult(r) =>
+    intToStr(r) |> strConcat(_, "   (expected 12)") |> strConcat("  floor(sqrt(144))  = ", _) |> println
 }
 let s2 = spawn "sqrt" sqrtBody
 send s2 Tag SqrtQuery(2500, "main")
 receive {
   SqrtResult(r) =>
-    println(strConcat("  floor(sqrt(2500)) = ", strConcat(intToStr(r), "  (expected 50)")))
+    intToStr(r) |> strConcat(_, "  (expected 50)") |> strConcat("  floor(sqrt(2500)) = ", _) |> println
 }
 let s3 = spawn "sqrt" sqrtBody
 send s3 Tag SqrtQuery(2, "main")
 receive {
   SqrtResult(r) =>
-    println(strConcat("  floor(sqrt(2))    = ", strConcat(intToStr(r), "    (expected 1)")))
+    intToStr(r) |> strConcat(_, "    (expected 1)") |> strConcat("  floor(sqrt(2))    = ", _) |> println
 }
 
 -- 5. Bisection sqrt
@@ -170,13 +171,13 @@ let b1 = spawn "bisect" bisBody
 send b1 Tag BisQuery(225, "main")
 receive {
   BisResult(r) =>
-    println(strConcat("  floor(sqrt(225))  = ", strConcat(intToStr(r), "  (expected 15)")))
+    intToStr(r) |> strConcat(_, "  (expected 15)") |> strConcat("  floor(sqrt(225))  = ", _) |> println
 }
 let b2 = spawn "bisect" bisBody
 send b2 Tag BisQuery(7, "main")
 receive {
   BisResult(r) =>
-    println(strConcat("  floor(sqrt(7))    = ", strConcat(intToStr(r), "    (expected 2)")))
+    intToStr(r) |> strConcat(_, "    (expected 2)") |> strConcat("  floor(sqrt(7))    = ", _) |> println
 }
 
 -- 6. Energy: m=70 kg, v=9 m/s → KE=2835 J;  F=50 N, d=12 m → W=600 J
@@ -185,8 +186,8 @@ let e1 = spawn "energy" energyBody
 send e1 Tag EnergyQuery(70, 9, 50, 12, "main")
 receive {
   EnergyResult(ke, work) => {
-    println(strConcat("  m=70 kg  v=9 m/s   →  KE = ", strConcat(intToStr(ke),  " J  (expected 2835)")))
-    println(strConcat("  F=50 N   d=12 m    →  W  = ", strConcat(intToStr(work), " J   (expected 600)")))
+    intToStr(ke)   |> strConcat(_, " J  (expected 2835)") |> strConcat("  m=70 kg  v=9 m/s   →  KE = ", _) |> println
+    intToStr(work) |> strConcat(_, " J   (expected 600)") |> strConcat("  F=50 N   d=12 m    →  W  = ", _) |> println
   }
 }
 
@@ -198,8 +199,8 @@ send eu1 Tag EulerQuery(2, 4000, 100, 10, "main")
 receive {
   EulerResult(v, x) => {
     println("  m=2 kg  F=4 N  dt=0.1 s  10 steps  (a=2 m/s²)")
-    println(strConcat("  final v = ", strConcat(intToStr(v), " mm/s  (expected ~2000)")))
-    println(strConcat("  final x = ", strConcat(intToStr(x), " mm    (expected ~1000, Euler under-shoots)")))
+    intToStr(v) |> strConcat(_, " mm/s  (expected ~2000)") |> strConcat("  final v = ", _) |> println
+    intToStr(x) |> strConcat(_, " mm    (expected ~1000, Euler under-shoots)") |> strConcat("  final x = ", _) |> println
   }
 }
 -- All arithmetic is integer / fixed-point (scaled by 1000 where decimals matter).
